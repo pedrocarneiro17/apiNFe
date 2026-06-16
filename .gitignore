@@ -34,6 +34,9 @@ env/
 *.swp
 *.swo
 
+# Schemas XSD cacheados localmente (baixados automaticamente)
+schemas/
+
 # OS
 .DS_Store
 Thumbs.db

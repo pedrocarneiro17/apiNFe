@@ -731,9 +731,13 @@ def emitir_nfe(dados: dict) -> dict:
                 f"Serviço SEFAZ indisponível: cStat={status['cStat']} | {status['xMotivo']}"
             )
 
-        # 2. Montar e assinar NF-e
+        # 2. Montar e validar NF-e
         print("[nfe] Montando XML da NF-e...", flush=True)
         nfe_element, chave = montar_nfe_xml(dados)
+
+        print("[nfe] Validando XML contra schema XSD...", flush=True)
+        from validador_xml import validar_ou_abortar
+        validar_ou_abortar(nfe_element)
 
         print("[nfe] Assinando com XMLDSIG RSA-SHA1...", flush=True)
         nfe_assinada = assinar_nfe(nfe_element, chave_privada, certificado)
@@ -1022,9 +1026,13 @@ def emitir_nfce(dados: dict) -> dict:
                 f"Serviço SEFAZ indisponível: cStat={status['cStat']} | {status['xMotivo']}"
             )
 
-        # 2. Montar XML
+        # 2. Montar e validar XML
         print("[nfce] Montando XML da NFC-e...", flush=True)
         nfe_element, chave, dh_emi = montar_nfce_xml(dados)
+
+        print("[nfce] Validando XML contra schema XSD...", flush=True)
+        from validador_xml import validar_ou_abortar
+        validar_ou_abortar(nfe_element)
 
         # 3. Assinar
         print("[nfce] Assinando com XMLDSIG RSA-SHA1...", flush=True)
