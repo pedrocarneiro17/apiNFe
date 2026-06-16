@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Produtos — Emissor NF-e{% endblock %}
+{% block nav_produtos %}active{% endblock %}
+{% block page_title %}Produtos{% endblock %}
+{% block page_subtitle %}Catálogo de produtos pré-cadastrados para agilizar a emissão{% endblock %}
+
+{% block content %}
+<div style="display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap">
+
+  <!-- Lista -->
+  <div style="flex:2;min-width:340px">
+    <div class="card">
+      <div class="card-title">
+        Produtos cadastrados
+        <button class="btn btn-primary btn-sm" onclick="novoProduto()">
+          <i class="ti ti-plus"></i> Novo
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Código</th><th>Descrição</th><th>NCM</th>
+              <th>CFOP</th><th>Unid.</th><th>Preço</th><th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in produtos %}
+            <tr>
+              <td style="font-weight:600;white-space:nowrap">{{ p.codigo }}</td>
+              <td>{{ p.descricao }}</td>
+              <td style="color:var(--muted);font-size:.78rem">{{ p.ncm }}</td>
+              <td>{{ p.cfop }}</td>
+              <td>{{ p.unidade }}</td>
+              <td>R$ {{ '%.2f'|format(p.preco|float) }}</td>
+              <td>
+                <button class="btn btn-outline btn-sm" onclick="editarProduto({{ p | tojson | e }})">
+                  <i class="ti ti-pencil"></i>
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="excluirProduto({{ p.id }})">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="empty">Nenhum produto cadastrado.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Formulário -->
+  <div style="flex:1;min-width:300px">
+    <div class="card">
+      <div class="card-title" id="form-titulo">Novo Produto</div>
+      <form id="form-produto">
+        <input type="hidden" name="produto_id" id="f-pid">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Código *</label>
+            <input type="text" name="codigo" id="f-codigo" required placeholder="001">
+          </div>
+          <div class="form-group">
+            <label>Unidade</label>
+            <input type="text" name="unidade" value="UN" maxlength="6" placeholder="UN, KG, CX...">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Descrição *</label>
+          <input type="text" name="descricao" required maxlength="120">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>NCM</label>
+            <input type="text" name="ncm" maxlength="8" placeholder="8 dígitos">
+          </div>
+          <div class="form-group">
+            <label>CFOP</label>
+            <input type="text" name="cfop" value="5102" maxlength="4">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Preço Unitário (R$)</label>
+          <input type="number" name="preco" value="0" min="0" step="0.01">
+        </div>
+
+        <div class="section-label">Tributação ICMS</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Origem</label>
+            <select name="orig">
+              <option value="0">0 — Nacional</option>
+              <option value="1">1 — Estrangeira (importação direta)</option>
+              <option value="2">2 — Estrangeira (adquirida no mercado interno)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Regime</label>
+            <select name="regime_icms" id="f-regime" onchange="alternarRegime()">
+              <option value="simples">Simples Nacional (CSOSN)</option>
+              <option value="normal">Regime Normal (CST)</option>
+            </select>
+          </div>
+        </div>
+        <div id="area-csosn">
+          <div class="form-group">
+            <label>CSOSN</label>
+            <select name="csosn">
+              <option value="101">101 — Tributada com permissão de crédito</option>
+              <option value="102" selected>102 — Tributada sem permissão de crédito</option>
+              <option value="103">103 — Isenção para faixa de receita bruta</option>
+              <option value="300">300 — Imune</option>
+              <option value="400">400 — Não tributada</option>
+              <option value="500">500 — ICMS cobrado por substituição tributária</option>
+              <option value="900">900 — Outros</option>
+            </select>
+          </div>
+        </div>
+        <div id="area-cst" style="display:none">
+          <div class="form-row">
+            <div class="form-group">
+              <label>CST ICMS</label>
+              <select name="cst_icms">
+                <option value="00">00 — Tributada integralmente</option>
+                <option value="10">10 — Tributada com ST</option>
+                <option value="20">20 — Com redução de BC</option>
+                <option value="40">40 — Isenta</option>
+                <option value="41">41 — Não tributada</option>
+                <option value="50">50 — Suspensão</option>
+                <option value="60">60 — ICMS cobrado anteriormente por ST</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Alíquota ICMS (%)</label>
+              <input type="number" name="p_icms" value="12" min="0" max="100" step="0.01">
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:.75rem">
+          <button type="button" class="btn btn-outline" onclick="novoProduto()">Limpar</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="ti ti-device-floppy"></i> Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function alternarRegime() {
+  const r = document.getElementById('f-regime').value;
+  document.getElementById('area-csosn').style.display = r === 'simples' ? '' : 'none';
+  document.getElementById('area-cst').style.display   = r === 'normal'  ? '' : 'none';
+}
+
+function novoProduto() {
+  document.getElementById('form-produto').reset();
+  document.getElementById('f-pid').value = '';
+  document.getElementById('form-titulo').textContent = 'Novo Produto';
+  alternarRegime();
+}
+
+function editarProduto(p) {
+  document.getElementById('form-titulo').textContent = 'Editar: ' + p.codigo;
+  document.getElementById('f-pid').value    = p.id;
+  document.getElementById('f-codigo').value = p.codigo;
+  document.querySelector('[name=descricao]').value = p.descricao;
+  document.querySelector('[name=ncm]').value       = p.ncm || '';
+  document.querySelector('[name=cfop]').value      = p.cfop || '5102';
+  document.querySelector('[name=unidade]').value   = p.unidade || 'UN';
+  document.querySelector('[name=preco]').value     = p.preco || 0;
+  document.querySelector('[name=orig]').value      = p.orig || '0';
+  // detectar regime
+  const temCsosn = p.csosn && p.csosn !== '00';
+  document.getElementById('f-regime').value = temCsosn ? 'simples' : 'normal';
+  alternarRegime();
+  document.querySelector('[name=csosn]').value    = p.csosn || '102';
+  document.querySelector('[name=cst_icms]').value = p.cst_icms || '00';
+  document.querySelector('[name=p_icms]').value   = p.p_icms || 12;
+}
+
+document.getElementById('form-produto').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const resp = await fetch('/admin/produtos/salvar', { method:'POST', body: fd });
+  const data = await resp.json();
+  if (data.ok) { location.reload(); }
+  else alert('Erro: ' + (data.erro || 'Erro ao salvar'));
+});
+
+async function excluirProduto(id) {
+  if (!confirm('Excluir produto #' + id + '?')) return;
+  const resp = await fetch('/admin/produtos/' + id + '/excluir', { method:'POST' });
+  const data = await resp.json();
+  if (data.ok) location.reload();
+  else alert('Erro: ' + data.erro);
+}
+</script>
+{% endblock %}

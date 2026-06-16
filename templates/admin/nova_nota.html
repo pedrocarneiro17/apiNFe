@@ -1,0 +1,396 @@
+{% extends "base.html" %}
+{% block title %}Nova NF-e{% endblock %}
+{% block nav_nova %}active{% endblock %}
+{% block page_title %}Nova NF-e{% endblock %}
+{% block page_subtitle %}Preencha os dados e clique em Salvar para criar a nota{% endblock %}
+
+{% block head %}
+<style>
+  .item-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px 90px 70px 36px;
+    gap: .5rem; align-items: end; margin-bottom: .5rem;
+  }
+  .item-row input, .item-row select {
+    padding: .4rem .6rem; border: 1.5px solid var(--border);
+    border-radius: 6px; font-size: .82rem; width: 100%;
+  }
+  .item-row input:focus, .item-row select:focus { outline:none; border-color:var(--primary); }
+  .item-header {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px 90px 70px 36px;
+    gap: .5rem; margin-bottom: .35rem;
+  }
+  .item-header span {
+    font-size: .68rem; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  #total-box {
+    background: #f0f7ff; border: 1.5px solid #bfdbfe;
+    border-radius: 8px; padding: .85rem 1.1rem;
+    font-size: .9rem; font-weight: 700; color: #1a5c96;
+    text-align: right; margin-top: .5rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<form id="form-nota">
+<div class="card">
+  <div class="card-title">1. Emitente</div>
+  <div class="form-group">
+    <label>Emitente *</label>
+    <select name="cliente_id" id="cliente_id" required onchange="carregarEmitente(this.value)">
+      <option value="">Selecione o emitente...</option>
+      {% for c in clientes %}
+        <option value="{{ c.id }}">{{ c.id }} — {{ c.razao_social }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-row-3">
+    <div class="form-group">
+      <label>Natureza da Operação</label>
+      <input type="text" name="nat_op" value="Venda de mercadoria" maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>Tipo NF</label>
+      <select name="tp_nf">
+        <option value="1">1 — Saída</option>
+        <option value="0">0 — Entrada</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Finalidade</label>
+      <select name="fin_nfe">
+        <option value="1">1 — Normal</option>
+        <option value="2">2 — Complementar</option>
+        <option value="3">3 — Ajuste</option>
+        <option value="4">4 — Devolução</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-row-4">
+    <div class="form-group">
+      <label>Destino</label>
+      <select name="id_dest">
+        <option value="1">1 — Interna</option>
+        <option value="2">2 — Interestadual</option>
+        <option value="3">3 — Exterior</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Consumidor Final</label>
+      <select name="ind_final">
+        <option value="0">0 — Não</option>
+        <option value="1">1 — Sim</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Presença</label>
+      <select name="ind_pres">
+        <option value="1">1 — Presencial</option>
+        <option value="2">2 — Internet</option>
+        <option value="9">9 — Outros</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Frete</label>
+      <select name="mod_frete">
+        <option value="9">9 — Sem frete</option>
+        <option value="0">0 — Emitente</option>
+        <option value="1">1 — Destinatário</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">2. Destinatário</div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Tipo de Documento</label>
+      <select id="tp_doc_dest" onchange="alternarDocDest()">
+        <option value="cnpj">CNPJ</option>
+        <option value="cpf">CPF</option>
+      </select>
+    </div>
+    <div class="form-group" id="campo-cnpj-dest">
+      <label>CNPJ *</label>
+      <input type="text" name="cnpj_dest" id="cnpj_dest" maxlength="18" placeholder="00.000.000/0001-00" oninput="buscarDestinatario()">
+    </div>
+    <div class="form-group" id="campo-cpf-dest" style="display:none">
+      <label>CPF</label>
+      <input type="text" name="cpf_dest" maxlength="14" placeholder="000.000.000-00">
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Razão Social / Nome *</label>
+      <input type="text" name="xNome_dest" id="xNome_dest" required maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>IE (ou ISENTO)</label>
+      <input type="text" name="ie_dest" placeholder="ISENTO">
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>E-mail</label>
+      <input type="email" name="email_dest" maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>CEP</label>
+      <input type="text" name="cep_dest" id="cep_dest" maxlength="9" placeholder="00000-000" onblur="buscarCep('dest')">
+    </div>
+  </div>
+  <div class="form-row-3">
+    <div class="form-group" style="grid-column:span 2">
+      <label>Logradouro *</label>
+      <input type="text" name="xLgr_dest" id="xLgr_dest" required maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>Número *</label>
+      <input type="text" name="nro_dest" required maxlength="60">
+    </div>
+  </div>
+  <div class="form-row-3">
+    <div class="form-group">
+      <label>Complemento</label>
+      <input type="text" name="xCpl_dest" maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>Bairro *</label>
+      <input type="text" name="xBairro_dest" id="xBairro_dest" required maxlength="60">
+    </div>
+    <div class="form-group">
+      <label>UF *</label>
+      <select name="uf_dest" id="uf_dest" required>
+        <option value="">—</option>
+        {% for uf in ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'] %}
+        <option value="{{ uf }}">{{ uf }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Código IBGE Município *</label>
+      <input type="text" name="cMun_dest" id="cMun_dest" required maxlength="7" placeholder="7 dígitos">
+    </div>
+    <div class="form-group">
+      <label>Nome Município *</label>
+      <input type="text" name="xMun_dest" id="xMun_dest" required maxlength="60">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">
+    3. Itens
+    <button type="button" class="btn btn-outline btn-sm" onclick="adicionarItem()">
+      <i class="ti ti-plus"></i> Adicionar item
+    </button>
+  </div>
+
+  <div class="item-header">
+    <span>Código</span><span>Descrição</span><span>NCM</span>
+    <span>CFOP</span><span>Qtd</span><span>Vl Unit</span><span></span>
+  </div>
+  <div id="itens-container"></div>
+  <div id="total-box">Total: R$ <span id="total-valor">0,00</span></div>
+</div>
+
+<div class="card">
+  <div class="card-title">4. Pagamento e Extras</div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Forma de Pagamento</label>
+      <select name="tp_pag">
+        <option value="01">01 — Dinheiro</option>
+        <option value="02">02 — Cheque</option>
+        <option value="03">03 — Cartão de Crédito</option>
+        <option value="04">04 — Cartão de Débito</option>
+        <option value="05">05 — Crédito Loja</option>
+        <option value="10">10 — Vale Alimentação</option>
+        <option value="15">15 — Boleto Bancário</option>
+        <option value="90">90 — Sem Pagamento</option>
+        <option value="99">99 — Outros</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Valor do Frete (R$)</label>
+      <input type="number" name="v_frete" value="0" min="0" step="0.01">
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Informações Adicionais / Observações</label>
+    <textarea name="inf_adic" rows="3" placeholder="Texto livre impresso no DANFE..."></textarea>
+  </div>
+</div>
+
+<div style="display:flex;gap:.75rem;justify-content:flex-end;margin-bottom:2rem">
+  <a href="/admin/notas" class="btn btn-outline">Cancelar</a>
+  <button type="button" class="btn btn-primary" onclick="salvarNota()">
+    <i class="ti ti-device-floppy"></i> Salvar NF-e
+  </button>
+</div>
+</form>
+
+<script>
+const produtos = {{ produtos | tojson }};
+let itemIdx = 0;
+
+function adicionarItem(p) {
+  itemIdx++;
+  const idx = itemIdx;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = 'item-' + idx;
+  div.innerHTML = `
+    <input type="text" placeholder="Código" value="${p ? p.codigo : ''}"
+           oninput="buscarProduto(this, ${idx})" data-campo="codigo">
+    <input type="text" placeholder="Descrição *" value="${p ? p.descricao : ''}" data-campo="descricao">
+    <input type="text" placeholder="NCM" value="${p ? p.ncm : ''}" maxlength="8" data-campo="ncm">
+    <input type="text" placeholder="CFOP" value="${p ? p.cfop : '5102'}" maxlength="4" data-campo="cfop">
+    <input type="number" placeholder="Qtd" value="1" min="0.0001" step="any" data-campo="qcom"
+           oninput="calcTotal()">
+    <input type="number" placeholder="R$" value="${p ? p.preco : ''}" min="0" step="0.01" data-campo="vuncom"
+           oninput="calcTotal()">
+    <button type="button" style="background:var(--danger);color:#fff;border:none;border-radius:6px;cursor:pointer;padding:.3rem .5rem"
+            onclick="document.getElementById('item-${idx}').remove(); calcTotal()">
+      <i class="ti ti-trash"></i>
+    </button>`;
+  document.getElementById('itens-container').appendChild(div);
+  calcTotal();
+}
+
+function buscarProduto(input, idx) {
+  const code = input.value.trim().toLowerCase();
+  const p = produtos.find(x => x.codigo.toLowerCase() === code);
+  if (!p) return;
+  const row = document.getElementById('item-' + idx);
+  row.querySelector('[data-campo=descricao]').value = p.descricao;
+  row.querySelector('[data-campo=ncm]').value       = p.ncm;
+  row.querySelector('[data-campo=cfop]').value      = p.cfop;
+  row.querySelector('[data-campo=vuncom]').value    = p.preco;
+  calcTotal();
+}
+
+function calcTotal() {
+  let total = 0;
+  document.querySelectorAll('.item-row').forEach(row => {
+    const q = parseFloat(row.querySelector('[data-campo=qcom]').value) || 0;
+    const v = parseFloat(row.querySelector('[data-campo=vuncom]').value) || 0;
+    total += q * v;
+  });
+  document.getElementById('total-valor').textContent =
+    total.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function coletarItens() {
+  const itens = [];
+  let nItem = 1;
+  document.querySelectorAll('.item-row').forEach(row => {
+    const codigo   = row.querySelector('[data-campo=codigo]').value.trim();
+    const descricao= row.querySelector('[data-campo=descricao]').value.trim();
+    const ncm      = row.querySelector('[data-campo=ncm]').value.trim();
+    const cfop     = row.querySelector('[data-campo=cfop]').value.trim();
+    const qcom     = parseFloat(row.querySelector('[data-campo=qcom]').value) || 0;
+    const vuncom   = parseFloat(row.querySelector('[data-campo=vuncom]').value) || 0;
+    if (!descricao) return;
+    // buscar produto cadastrado para pegar CSOSN/CST
+    const p = produtos.find(x => x.codigo === codigo) || {};
+    itens.push({
+      nItem, cProd: codigo || String(nItem),
+      xProd: descricao, NCM: ncm || '00000000', CFOP: cfop || '5102',
+      uCom: p.unidade || 'UN', qCom: qcom, vUnCom: vuncom,
+      orig: p.orig || '0', CSOSN: p.csosn || '102',
+      CST_ICMS: p.cst_icms || '00', pICMS: p.p_icms || 12,
+    });
+    nItem++;
+  });
+  return itens;
+}
+
+function coletarForm() {
+  const f = document.getElementById('form-nota');
+  const fd = new FormData(f);
+  const dados = {};
+  fd.forEach((v, k) => { dados[k] = v; });
+  const itens = coletarItens();
+  const vNF = itens.reduce((s, i) => s + i.qCom * i.vUnCom, 0);
+  dados.itens = itens;
+  dados.v_nf  = parseFloat(vNF.toFixed(2));
+  dados.v_desc = 0;
+  dados.v_frete = parseFloat(dados.v_frete || 0);
+  return dados;
+}
+
+async function salvarNota() {
+  const dados = coletarForm();
+  if (!dados.cliente_id) { alert('Selecione o emitente.'); return; }
+  if (!dados.itens.length) { alert('Adicione ao menos um item.'); return; }
+  if (!dados.xNome_dest) { alert('Informe o nome do destinatário.'); return; }
+
+  const resp = await fetch('/admin/notas/nova', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(dados),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    window.location.href = '/admin/notas';
+  } else {
+    alert('Erro ao salvar:\n' + (data.erro || 'Erro desconhecido'));
+  }
+}
+
+function alternarDocDest() {
+  const tp = document.getElementById('tp_doc_dest').value;
+  document.getElementById('campo-cnpj-dest').style.display = tp === 'cnpj' ? '' : 'none';
+  document.getElementById('campo-cpf-dest').style.display  = tp === 'cpf'  ? '' : 'none';
+}
+
+async function buscarDestinatario() {
+  const cnpj = document.getElementById('cnpj_dest').value.replace(/\D/g,'');
+  if (cnpj.length !== 14) return;
+  try {
+    const resp = await fetch(`https://publica.cnpj.ws/cnpj/${cnpj}`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+    document.getElementById('xNome_dest').value = d.razao_social || '';
+    const end = d.estabelecimento;
+    if (end) {
+      const cep = (end.cep || '').replace(/\D/g,'');
+      document.getElementById('cep_dest').value = cep;
+      if (cep.length === 8) await buscarCep('dest');
+      document.querySelector('[name=nro_dest]').value  = end.numero || '';
+      document.querySelector('[name=xCpl_dest]').value = end.complemento || '';
+    }
+  } catch(e) {}
+}
+
+async function buscarCep(sufixo) {
+  const cep = document.getElementById('cep_' + sufixo).value.replace(/\D/g,'');
+  if (cep.length !== 8) return;
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.erro) return;
+    document.getElementById('xLgr_'  + sufixo).value = d.logradouro || '';
+    document.getElementById('xBairro_' + sufixo).value = d.bairro || '';
+    document.getElementById('uf_'    + sufixo).value = d.uf || '';
+    document.getElementById('cMun_'  + sufixo).value = d.ibge || '';
+    document.getElementById('xMun_'  + sufixo).value = d.localidade || '';
+  } catch(e) {}
+}
+
+function carregarEmitente(id) {
+  // só feedback visual por enquanto
+}
+
+// Adiciona 1 item em branco ao abrir
+adicionarItem();
+</script>
+{% endblock %}

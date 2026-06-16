@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Notas Fiscais — Emissor NF-e{% endblock %}
+{% block nav_notas %}active{% endblock %}
+{% block page_title %}Notas Fiscais Eletrônicas{% endblock %}
+{% block page_subtitle %}Modelos 55 e 65 — Layout 4.00{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-title">
+    <span>Filtros</span>
+  </div>
+  <form method="GET" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end">
+    <div class="form-group" style="margin:0;min-width:200px">
+      <label>Emitente</label>
+      <select name="cliente_id">
+        <option value="">Todos</option>
+        {% for c in clientes %}
+          <option value="{{ c.id }}" {% if filtro_cliente == c.id %}selected{% endif %}>{{ c.id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;min-width:160px">
+      <label>Status</label>
+      <select name="status">
+        <option value="">Todos</option>
+        <option value="pendente"  {% if filtro_status=='pendente'  %}selected{% endif %}>Pendente</option>
+        <option value="emitindo"  {% if filtro_status=='emitindo'  %}selected{% endif %}>Emitindo</option>
+        <option value="emitido"   {% if filtro_status=='emitido'   %}selected{% endif %}>Emitido</option>
+        <option value="cancelado" {% if filtro_status=='cancelado' %}selected{% endif %}>Cancelado</option>
+        <option value="erro"      {% if filtro_status=='erro'      %}selected{% endif %}>Erro</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-outline btn-sm">Filtrar</button>
+    <a href="/admin/notas" class="btn btn-outline btn-sm">Limpar</a>
+    <div style="display:flex;gap:.5rem;margin-left:auto">
+      <a href="/admin/notas/nova" class="btn btn-primary btn-sm">
+        <i class="ti ti-plus"></i> Nova NF-e
+      </a>
+      <a href="/admin/nfce/nova" class="btn btn-sm" style="background:#7c3aed;color:#fff">
+        <i class="ti ti-receipt"></i> Nova NFC-e
+      </a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Emitente</th>
+          <th>nNF / Série</th>
+          <th>Destinatário</th>
+          <th>Valor</th>
+          <th>Status</th>
+          <th>Chave</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in notas %}
+        <tr id="row-{{ n.id }}">
+          <td style="color:var(--muted);font-size:.75rem">{{ n.id }}</td>
+          <td>
+            {{ n.razao_social or n.cliente_id }}
+            <span style="font-size:.65rem;background:{% if n.modelo==65 %}#7c3aed{% else %}#1a5c96{% endif %};color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px">
+              {{ n.modelo or 55 }}
+            </span>
+          </td>
+          <td>{{ '%09d'|format(n.n_nfe) }} / {{ n.serie }}</td>
+          <td>{{ n.xNome_dest or '—' }}</td>
+          <td>R$ {{ '%.2f'|format(n.v_nf|float) }}</td>
+          <td>
+            <span class="badge badge-{{ n.status }}" id="badge-{{ n.id }}">{{ n.status }}</span>
+          </td>
+          <td style="font-size:.72rem;color:var(--text);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ n.chave or '—' }}
+          </td>
+          <td>
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+              {% if n.status == 'pendente' %}
+                <button class="btn btn-success btn-sm" onclick="emitir({{ n.id }}, this)">
+                  <i class="ti ti-send"></i> Emitir
+                </button>
+              {% endif %}
+              {% if n.status == 'erro' %}
+                <button class="btn btn-warning btn-sm" onclick="reiniciar({{ n.id }})">
+                  <i class="ti ti-refresh"></i> Reiniciar
+                </button>
+              {% endif %}
+              {% if n.status == 'emitido' %}
+                {% if n.modelo == 65 %}
+                <a href="/admin/notas/{{ n.id }}/cupom" target="_blank" class="btn btn-outline btn-sm" title="Cupom NFC-e">
+                  <i class="ti ti-receipt"></i> Cupom
+                </a>
+                {% else %}
+                <a href="/admin/notas/{{ n.id }}/pdf" target="_blank" class="btn btn-outline btn-sm" title="DANFE PDF">
+                  <i class="ti ti-file-type-pdf"></i> PDF
+                </a>
+                {% endif %}
+                <a href="/admin/notas/{{ n.id }}/xml" class="btn btn-outline btn-sm" title="Download XML">
+                  <i class="ti ti-download"></i> XML
+                </a>
+                <button class="btn btn-danger btn-sm" onclick="cancelar({{ n.id }})">
+                  <i class="ti ti-x"></i> Cancelar
+                </button>
+              {% endif %}
+              {% if n.status in ('pendente', 'erro') %}
+                <button class="btn btn-danger btn-sm" onclick="excluir({{ n.id }})">
+                  <i class="ti ti-trash"></i>
+                </button>
+              {% endif %}
+              {% if n.observacao %}
+                <span title="{{ n.observacao }}" style="cursor:help;color:var(--danger);font-size:1.1rem">⚠</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">Nenhuma nota encontrada.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal cancelamento -->
+<div id="modal-cancelar" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:10px;padding:1.75rem;width:100%;max-width:420px;margin:1rem">
+    <div style="font-weight:700;font-size:1rem;margin-bottom:1rem">Cancelar NF-e</div>
+    <input type="hidden" id="cancel-nota-id">
+    <div class="form-group">
+      <label>Justificativa (mín. 15 caracteres)</label>
+      <textarea id="cancel-just" rows="3" placeholder="Descreva o motivo do cancelamento..."></textarea>
+    </div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="fecharModal()">Cancelar</button>
+      <button class="btn btn-danger" onclick="confirmarCancelamento()">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function emitir(id, btn) {
+  if (!confirm('Emitir NF-e #' + id + ' na SEFAZ?')) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  const resp = await fetch('/admin/notas/' + id + '/emitir', { method: 'POST' });
+  const data = await resp.json();
+  if (!data.ok) { alert('Erro: ' + data.erro); btn.disabled=false; return; }
+  document.getElementById('badge-' + id).className = 'badge badge-emitindo';
+  document.getElementById('badge-' + id).textContent = 'emitindo';
+  btn.remove();
+  aguardarStatus(id);
+}
+
+function aguardarStatus(id) {
+  const intervalo = setInterval(async () => {
+    const resp = await fetch('/admin/notas/' + id + '/status');
+    const data = await resp.json();
+    const badge = document.getElementById('badge-' + id);
+    if (badge) badge.className = 'badge badge-' + data.status;
+    if (badge) badge.textContent = data.status;
+    if (data.status !== 'emitindo') {
+      clearInterval(intervalo);
+      if (data.status === 'emitido') location.reload();
+      else if (data.status === 'erro') {
+        alert('Erro na emissão:\n' + (data.observacao || ''));
+        location.reload();
+      }
+    }
+  }, 2500);
+}
+
+async function reiniciar(id) {
+  await fetch('/admin/notas/' + id + '/reiniciar', { method: 'POST' });
+  location.reload();
+}
+
+async function excluir(id) {
+  if (!confirm('Excluir nota #' + id + '?')) return;
+  await fetch('/admin/notas/' + id + '/excluir', { method: 'POST' });
+  document.getElementById('row-' + id).remove();
+}
+
+let _cancelId = null;
+function cancelar(id) {
+  _cancelId = id;
+  document.getElementById('cancel-nota-id').value = id;
+  document.getElementById('cancel-just').value = '';
+  const m = document.getElementById('modal-cancelar');
+  m.style.display = 'flex';
+}
+function fecharModal() {
+  document.getElementById('modal-cancelar').style.display = 'none';
+}
+async function confirmarCancelamento() {
+  const just = document.getElementById('cancel-just').value.trim();
+  if (just.length < 15) { alert('Justificativa muito curta (mín. 15 caracteres).'); return; }
+  const resp = await fetch('/admin/notas/' + _cancelId + '/cancelar', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ justificativa: just })
+  });
+  const data = await resp.json();
+  fecharModal();
+  if (data.ok) { alert('Cancelamento enviado à SEFAZ.'); location.reload(); }
+  else alert('Erro: ' + data.erro);
+}
+</script>
+{% endblock %}

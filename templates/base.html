@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Emissor Fiscal{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:       #153259;
+      --primary-light: #234e83;
+      --accent:        #a2242b;
+      --danger:        #851a21;
+      --success:       #166534;
+      --warning:       #a16207;
+      --bg:            #f6f8fb;
+      --card:          #ffffff;
+      --text:          #0f172a;
+      --secondary:     #e8eff8;
+      --muted:         #f1f5fb;
+      --muted-fg:      #64748b;
+      --border:        #dbe4f0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex;
+    }
+
+    /* ── Sidebar wrapper (overflow visible para o botão de toggle) ── */
+    .sidebar-wrapper {
+      position: relative; flex-shrink: 0;
+      display: flex;
+    }
+
+    .sidebar {
+      width: 210px;
+      background: linear-gradient(180deg, #153259 0%, #1e4070 60%, #234e83 100%);
+      display: flex; flex-direction: column;
+      position: sticky; top: 0; height: 100vh;
+      border-right: 1px solid rgba(255,255,255,.10);
+      transition: width .2s ease;
+      overflow: hidden;
+    }
+    .sidebar.collapsed { width: 64px; }
+
+    /* Oculta textos quando collapsed */
+    .sidebar.collapsed .nav-label,
+    .sidebar.collapsed .brand-text,
+    .sidebar.collapsed .sidebar-section,
+    .sidebar.collapsed .sf-email,
+    .sidebar.collapsed .sf-user-name span,
+    .sidebar.collapsed .sf-sair-label { display: none; }
+    .sidebar.collapsed .nav-item  { justify-content: center; padding: 10px 0; margin: 2px 8px; min-width: 0; }
+    .sidebar.collapsed .sidebar-brand { padding: 14px 0; justify-content: center; }
+    .sidebar.collapsed .sidebar-footer { align-items: center; padding: 12px 0; }
+    .sidebar.collapsed .sf-user-name  { justify-content: center; }
+
+    /* Toggle circular na borda direita */
+    .sidebar-toggle {
+      position: absolute; right: -11px; top: 72px; z-index: 30;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--primary-light); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      color: #fff; font-size: 11px;
+      transition: background .15s, box-shadow .15s;
+    }
+    .sidebar-toggle:hover { background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    .sidebar-toggle .ti { transition: transform .2s; }
+    .collapsed-toggle .ti { transform: rotate(180deg); }
+
+    /* Brand */
+    .sidebar-brand {
+      padding: 16px 16px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.09);
+      display: flex; align-items: center; gap: 10px;
+      min-width: 210px;
+    }
+    .brand-icon {
+      width: 30px; height: 30px; background: #fff; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; flex-shrink: 0;
+    }
+    .brand-text .app-name { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; }
+    .brand-text .app-sub  { font-size: 10px; color: rgba(255,255,255,.4); white-space: nowrap; }
+
+    /* Nav section label */
+    .sidebar-section {
+      font-size: 10px; font-weight: 600; letter-spacing: .1em;
+      text-transform: uppercase; color: rgba(255,255,255,.35);
+      padding: 18px 16px 5px; white-space: nowrap;
+    }
+
+    /* Nav items */
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 12px; font-size: 13px; font-weight: 500;
+      color: rgba(255,255,255,.68); cursor: pointer;
+      text-decoration: none; white-space: nowrap;
+      transition: background .15s, color .15s;
+      border-radius: 8px; min-width: 178px;
+      margin: 2px 16px;
+    }
+    .nav-item:hover {
+      background: var(--accent); color: #fff;
+    }
+    .nav-item.active {
+      background: var(--accent); color: #fff; font-weight: 600;
+      box-shadow: 0 1px 6px rgba(162,36,43,.35);
+    }
+    .nav-item i { font-size: 17px; flex-shrink: 0; }
+    .nav-label  { overflow: hidden; }
+
+    /* Footer */
+    .sidebar-footer {
+      margin-top: auto; padding: 12px 16px 16px;
+      border-top: 1px solid rgba(255,255,255,.09);
+      display: flex; flex-direction: column; gap: 4px;
+      min-width: 210px;
+    }
+    .sf-user-name {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; font-weight: 600; color: rgba(255,255,255,.8);
+    }
+    .sf-user-name i { font-size: 15px; color: rgba(255,255,255,.5); flex-shrink: 0; }
+    .sf-email { font-size: 10px; color: rgba(255,255,255,.35); padding-left: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sf-sair {
+      display: flex; align-items: center; gap: 5px; margin-top: 6px;
+      font-size: 11px; color: rgba(255,255,255,.38);
+      text-decoration: none; transition: color .12s;
+    }
+    .sf-sair:hover { color: rgba(255,255,255,.7); }
+
+    /* ── Main area ─────────────────────────────────────────────────── */
+    .main-area { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow-x: hidden; }
+    main { padding: 1.5rem 1.75rem; flex: 1; }
+
+    /* Hero card dentro do main */
+    .hero-card {
+      background: linear-gradient(110deg, #153259 0%, #234e83 40%, #851a21 75%, #a2242b 100%);
+      border-radius: 12px; padding: 28px 32px;
+      margin-bottom: 1.5rem; color: #fff;
+    }
+    .hero-card h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+    .hero-card p  { font-size: 13px; color: rgba(255,255,255,.65); }
+
+    /* ── Cards ─────────────────────────────────────────────────────── */
+    .card {
+      background: var(--card); border-radius: 10px;
+      padding: 1.25rem 1.4rem;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(15,23,42,.05);
+      margin-bottom: 1.25rem;
+    }
+    .card-title {
+      font-size: .875rem; font-weight: 700; color: var(--primary);
+      margin-bottom: 1rem; padding-bottom: .65rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
+    /* ── Forms ─────────────────────────────────────────────────────── */
+    .form-group { margin-bottom: .9rem; }
+    .form-group label {
+      display: block; font-size: .7rem; font-weight: 600;
+      color: var(--muted-fg); margin-bottom: .3rem;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%; padding: .48rem .8rem;
+      border: 1.5px solid var(--border); border-radius: 7px;
+      font-size: .875rem; color: var(--text);
+      background: #fff; transition: border-color .15s, box-shadow .15s;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--primary-light);
+      box-shadow: 0 0 0 3px rgba(35,78,131,.12);
+    }
+    .form-group input[readonly] { background: var(--muted); color: var(--muted-fg); }
+    .form-group textarea { resize: vertical; min-height: 70px; }
+    .form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+    .form-row-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 1rem; }
+
+    /* ── Buttons ───────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: .35rem;
+      padding: .5rem 1.1rem; border-radius: 7px;
+      font-size: .82rem; font-weight: 600;
+      cursor: pointer; border: none; text-decoration: none;
+      transition: filter .15s, background .15s;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-light); }
+    .btn-accent  { background: var(--accent); color: #fff; }
+    .btn-accent:hover  { background: var(--danger); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-success:hover { filter: brightness(.9); }
+    .btn-danger  { background: var(--danger); color: #fff; }
+    .btn-danger:hover  { filter: brightness(.9); }
+    .btn-warning { background: var(--warning); color: #fff; }
+    .btn-warning:hover { filter: brightness(.9); }
+    .btn-outline { background: transparent; border: 1.5px solid var(--border); color: var(--text); }
+    .btn-outline:hover { background: var(--secondary); }
+    .btn-sm { padding: .28rem .65rem; font-size: .75rem; }
+
+    /* ── Badges ────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-block; padding: .2rem .6rem;
+      border-radius: 999px; font-size: .68rem;
+      font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    }
+    .badge-pendente  { background: #fef3c7; color: #7c4a00; }
+    .badge-emitindo  { background: #dbeafe; color: #1e3a6e; }
+    .badge-emitido   { background: #dcfce7; color: #14532d; }
+    .badge-cancelado { background: #f3e8ff; color: #4c1d95; }
+    .badge-erro      { background: #fee2e2; color: var(--danger); }
+
+    /* ── Tables ────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; min-width: 500px; }
+    th {
+      text-align: left; padding: .5rem .75rem;
+      font-size: .68rem; font-weight: 700;
+      color: var(--muted-fg); text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1.5px solid var(--border); white-space: nowrap;
+    }
+    td { padding: .62rem .75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--muted); }
+    .empty { text-align: center; color: var(--muted-fg); padding: 2.5rem; font-size: .875rem; }
+
+    /* ── Misc ──────────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 13px; height: 13px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .section-label {
+      font-size: .7rem; font-weight: 700; color: var(--muted-fg);
+      text-transform: uppercase; letter-spacing: .07em;
+      margin: 1.25rem 0 .75rem;
+      padding-bottom: .4rem; border-bottom: 1px solid var(--border);
+    }
+    .alert { padding: .75rem 1rem; border-radius: 7px; font-size: .85rem; margin-bottom: 1rem; }
+    .alert-success { background: #dcfce7; color: #14532d; border: 1px solid #bbf7d0; }
+    .alert-danger  { background: #fee2e2; color: var(--danger); border: 1px solid #fca5a5; }
+
+    @media (max-width: 700px) {
+      .sidebar-wrapper { display: none; }
+      main { padding: 1rem; }
+      .form-row, .form-row-3, .form-row-4 { grid-template-columns: 1fr; }
+      .hero-card { padding: 20px; border-radius: 8px; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+  <div class="sidebar-wrapper">
+    <aside class="sidebar" id="sidebar">
+
+      <div class="sidebar-brand">
+        <div class="brand-icon">&#x1F4CB;</div>
+        <div class="brand-text">
+          <div class="app-name">Emissor Fiscal</div>
+          <div class="app-sub">NF-e · NFC-e</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">Menu</div>
+
+      <a href="/admin/notas"      class="nav-item {% block nav_notas    %}{% endblock %}">
+        <i class="ti ti-file-invoice"></i><span class="nav-label">Notas Fiscais</span>
+      </a>
+      <a href="/admin/notas/nova" class="nav-item {% block nav_nova     %}{% endblock %}">
+        <i class="ti ti-file-plus"></i><span class="nav-label">Nova NF-e (55)</span>
+      </a>
+      <a href="/admin/nfce/nova"  class="nav-item {% block nav_nfce     %}{% endblock %}">
+        <i class="ti ti-receipt"></i><span class="nav-label">Nova NFC-e (65)</span>
+      </a>
+      <a href="/admin/produtos"   class="nav-item {% block nav_produtos  %}{% endblock %}">
+        <i class="ti ti-package"></i><span class="nav-label">Produtos</span>
+      </a>
+      <a href="/admin/clientes"   class="nav-item {% block nav_clientes  %}{% endblock %}">
+        <i class="ti ti-building-store"></i><span class="nav-label">Emitentes</span>
+      </a>
+
+      <div class="sidebar-footer">
+        <div class="sf-user-name">
+          <i class="ti ti-user-circle"></i>
+          <span>Admin</span>
+        </div>
+        <div class="sf-email">admin@emissor.local</div>
+        <a href="/logout" class="sf-sair">
+          <i class="ti ti-logout"></i>
+          <span class="sf-sair-label">Sair</span>
+        </a>
+      </div>
+
+    </aside>
+
+    <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Recolher menu">
+      <i class="ti ti-chevron-left"></i>
+    </button>
+  </div>
+
+  <div class="main-area">
+    <main>
+      <div class="hero-card">
+        <h1>{% block page_title %}Emissor Fiscal{% endblock %}</h1>
+        <p>{% block page_subtitle %}{% endblock %}</p>
+      </div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script>
+    const sidebar  = document.getElementById('sidebar');
+    const toggleBtn = document.getElementById('sidebar-toggle');
+
+    function toggleSidebar() {
+      const collapsed = sidebar.classList.toggle('collapsed');
+      toggleBtn.classList.toggle('collapsed-toggle', collapsed);
+      localStorage.setItem('sidebar-collapsed', collapsed);
+    }
+
+    // restaura estado salvo
+    if (localStorage.getItem('sidebar-collapsed') === 'true') {
+      sidebar.classList.add('collapsed');
+      toggleBtn.classList.add('collapsed-toggle');
+    }
+  </script>
+</body>
+</html>

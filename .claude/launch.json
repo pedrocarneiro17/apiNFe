@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "emissor-nfe",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["run_dev.py"],
+      "port": 5000,
+      "autoPort": true
+    }
+  ]
+}

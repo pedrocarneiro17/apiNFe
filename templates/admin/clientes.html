@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Emitentes — Emissor NF-e{% endblock %}
+{% block nav_clientes %}active{% endblock %}
+{% block page_title %}Emitentes{% endblock %}
+{% block page_subtitle %}Cadastro de empresas emissoras (CNPJ, certificado A1, endereço fiscal){% endblock %}
+
+{% block content %}
+<div style="display:flex;gap:1rem;align-items:flex-start;flex-wrap:wrap">
+
+  <!-- Lista -->
+  <div style="flex:1;min-width:300px">
+    <div class="card">
+      <div class="card-title">
+        Emitentes cadastrados
+        <button class="btn btn-primary btn-sm" onclick="novoEmitente()">
+          <i class="ti ti-plus"></i> Novo
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Razão Social</th><th>CNPJ</th><th>UF</th><th>CRT</th><th>Ações</th></tr>
+          </thead>
+          <tbody>
+            {% for c in clientes %}
+            <tr>
+              <td style="font-weight:600">{{ c.id }}</td>
+              <td>{{ c.razao_social }}</td>
+              <td style="font-size:.78rem;color:var(--muted)">{{ c.cnpj }}</td>
+              <td>{{ c.uf }}</td>
+              <td>{{ c.crt }}</td>
+              <td>
+                <button class="btn btn-outline btn-sm" onclick="editarEmitente({{ c | tojson | e }})">
+                  <i class="ti ti-pencil"></i>
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="excluirEmitente('{{ c.id }}')">
+                  <i class="ti ti-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="empty">Nenhum emitente cadastrado.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Formulário -->
+  <div style="flex:1;min-width:340px">
+    <div class="card" id="form-card">
+      <div class="card-title" id="form-titulo">Novo Emitente</div>
+      <form id="form-emitente">
+        <input type="hidden" name="id" id="f-id">
+
+        <div class="section-label">Identificação</div>
+        <div class="form-group">
+          <label>ID / Apelido *</label>
+          <input type="text" name="id_edit" id="f-id-edit" required placeholder="Ex: empresa_abc">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Razão Social *</label>
+            <input type="text" name="razao_social" id="f-razao" required maxlength="60">
+          </div>
+          <div class="form-group">
+            <label>Nome Fantasia</label>
+            <input type="text" name="xFant" id="f-xfant" maxlength="60">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>CNPJ *</label>
+            <input type="text" name="cnpj" id="f-cnpj" required maxlength="18" placeholder="00.000.000/0001-00">
+          </div>
+          <div class="form-group">
+            <label>IE *</label>
+            <input type="text" name="ie" id="f-ie" required maxlength="14">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>CRT</label>
+            <select name="crt" id="f-crt">
+              <option value="1">1 — Simples Nacional</option>
+              <option value="2">2 — Simples Nacional — Excesso</option>
+              <option value="3">3 — Regime Normal</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Série NF-e</label>
+            <input type="number" name="serie" id="f-serie" value="1" min="1" max="889">
+          </div>
+        </div>
+
+        <div class="section-label">Endereço Fiscal</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>UF *</label>
+            <select name="uf" id="f-uf" required onchange="atualizarCuf()">
+              <option value="">—</option>
+              {% for uf in ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'] %}
+              <option value="{{ uf }}">{{ uf }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Cód. IBGE UF</label>
+            <input type="text" name="cuf" id="f-cuf" readonly placeholder="auto">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>CEP *</label>
+            <input type="text" name="cep" id="f-cep" required maxlength="9" placeholder="00000-000" onblur="buscarCepEmit()">
+          </div>
+          <div class="form-group">
+            <label>Logradouro *</label>
+            <input type="text" name="xLgr" id="f-xlgr" required maxlength="60">
+          </div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label>Número *</label>
+            <input type="text" name="nro" required maxlength="60">
+          </div>
+          <div class="form-group">
+            <label>Complemento</label>
+            <input type="text" name="xCpl" maxlength="60">
+          </div>
+          <div class="form-group">
+            <label>Bairro *</label>
+            <input type="text" name="xBairro" id="f-xbairro" required maxlength="60">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Código IBGE Município *</label>
+            <input type="text" name="cMun" id="f-cmun" required maxlength="7">
+          </div>
+          <div class="form-group">
+            <label>Município *</label>
+            <input type="text" name="xMun" id="f-xmun" required maxlength="60">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Telefone</label>
+          <input type="text" name="fone" maxlength="11" placeholder="31999990000">
+        </div>
+
+        <div class="section-label">Certificado Digital A1</div>
+        <div class="form-group" id="cert-upload-area" style="display:none">
+          <label>Arquivo .pfx</label>
+          <input type="file" id="f-cert-file" accept=".pfx">
+        </div>
+        <div class="form-group">
+          <label>Senha do Certificado</label>
+          <input type="password" name="senha_certificado" id="f-cert-senha" autocomplete="new-password">
+        </div>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:-.4rem;margin-bottom:.8rem">
+          Deixe em branco para manter a senha atual ao editar.
+        </div>
+
+        <div style="display:flex;gap:.75rem;justify-content:flex-end">
+          <button type="button" class="btn btn-outline" onclick="limparForm()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="ti ti-device-floppy"></i> Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const CUF = {AC:12,AL:27,AM:13,AP:16,BA:29,CE:23,DF:53,ES:32,GO:52,MA:21,
+             MG:31,MS:50,MT:51,PA:15,PB:25,PE:26,PI:22,PR:41,RJ:33,RN:24,
+             RO:11,RR:14,RS:43,SC:42,SE:28,SP:35,TO:17};
+
+function atualizarCuf() {
+  const uf = document.getElementById('f-uf').value;
+  document.getElementById('f-cuf').value = CUF[uf] || '';
+}
+
+async function buscarCepEmit() {
+  const cep = document.getElementById('f-cep').value.replace(/\D/g,'');
+  if (cep.length !== 8) return;
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const d = await r.json();
+    if (d.erro) return;
+    document.getElementById('f-xlgr').value   = d.logradouro || '';
+    document.getElementById('f-xbairro').value = d.bairro || '';
+    document.getElementById('f-cmun').value    = d.ibge || '';
+    document.getElementById('f-xmun').value    = d.localidade || '';
+    document.getElementById('f-uf').value      = d.uf || '';
+    atualizarCuf();
+  } catch(e){}
+}
+
+function novoEmitente() {
+  limparForm();
+  document.getElementById('form-titulo').textContent = 'Novo Emitente';
+  document.getElementById('f-id-edit').readOnly = false;
+  document.getElementById('cert-upload-area').style.display = '';
+}
+
+function editarEmitente(c) {
+  document.getElementById('form-titulo').textContent = 'Editar: ' + c.id;
+  document.getElementById('f-id').value       = c.id;
+  document.getElementById('f-id-edit').value  = c.id;
+  document.getElementById('f-id-edit').readOnly = true;
+  document.getElementById('f-razao').value    = c.razao_social || '';
+  document.getElementById('f-xfant').value    = c.xfant || '';
+  document.getElementById('f-cnpj').value     = c.cnpj || '';
+  document.getElementById('f-ie').value       = c.ie || '';
+  document.getElementById('f-crt').value      = c.crt || '1';
+  document.getElementById('f-serie').value    = c.serie || '1';
+  document.getElementById('f-uf').value       = c.uf || '';
+  document.getElementById('f-cuf').value      = c.cuf || '';
+  document.getElementById('f-cep').value      = c.cep || '';
+  document.getElementById('f-xlgr').value     = c.xlgr || '';
+  document.querySelector('[name=nro]').value   = c.nro || '';
+  document.querySelector('[name=xCpl]').value  = c.xcpl || '';
+  document.getElementById('f-xbairro').value  = c.xbairro || '';
+  document.getElementById('f-cmun').value     = c.cmun || '';
+  document.getElementById('f-xmun').value     = c.xmun || '';
+  document.querySelector('[name=fone]').value  = c.fone || '';
+  document.getElementById('cert-upload-area').style.display = '';
+  document.getElementById('f-cert-senha').value = '';
+  document.getElementById('form-card').scrollIntoView({behavior:'smooth'});
+}
+
+function limparForm() {
+  document.getElementById('form-emitente').reset();
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-id-edit').readOnly = false;
+  document.getElementById('cert-upload-area').style.display = 'none';
+  document.getElementById('form-titulo').textContent = 'Novo Emitente';
+}
+
+document.getElementById('form-emitente').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const idEdit = document.getElementById('f-id-edit').value.trim();
+  fd.set('id', idEdit);
+
+  const resp = await fetch('/admin/clientes/salvar', { method:'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) { alert('Erro: ' + (data.erro || 'Erro ao salvar')); return; }
+
+  // Upload do certificado se selecionado
+  const clienteId = idEdit;
+  const certFile = document.getElementById('f-cert-file').files[0];
+  if (certFile) {
+    const cfd = new FormData();
+    cfd.append('cert', certFile);
+    const cr = await fetch('/admin/clientes/' + clienteId + '/cert', { method:'POST', body: cfd });
+    const cd = await cr.json();
+    if (!cd.ok) { alert('Aviso: certificado não salvo — ' + cd.erro); }
+  }
+
+  alert('Emitente salvo com sucesso!');
+  location.reload();
+});
+
+async function excluirEmitente(id) {
+  if (!confirm('Excluir emitente "' + id + '"? As notas vinculadas não serão apagadas.')) return;
+  const resp = await fetch('/admin/clientes/' + id + '/excluir', { method:'POST' });
+  const data = await resp.json();
+  if (data.ok) location.reload();
+  else alert('Erro: ' + data.erro);
+}
+</script>
+{% endblock %}

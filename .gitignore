@@ -1,0 +1,39 @@
+# Variáveis de ambiente — NUNCA subir
+.env
+
+# Banco de dados local de desenvolvimento
+dev.db
+
+# XMLs gerados localmente
+xmls_dev/
+downloads/
+
+# Certificados digitais — NUNCA subir
+*.pfx
+*.p12
+*.pem
+certs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

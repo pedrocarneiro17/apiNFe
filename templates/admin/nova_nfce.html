@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+{% block title %}Nova NFC-e{% endblock %}
+{% block nav_nfce %}active{% endblock %}
+{% block page_title %}Nova NFC-e (Modelo 65){% endblock %}
+{% block page_subtitle %}Nota Fiscal de Consumidor Eletrônica — Venda no balcão / PDV{% endblock %}
+
+{% block head %}
+<style>
+  .item-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px 90px 36px;
+    gap: .5rem; align-items: end; margin-bottom: .5rem;
+  }
+  .item-row input, .item-row select {
+    padding: .4rem .6rem; border: 1.5px solid var(--border);
+    border-radius: 6px; font-size: .82rem; width: 100%;
+  }
+  .item-row input:focus, .item-row select:focus { outline:none; border-color:#7c3aed; }
+  .item-header {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px 90px 90px 36px;
+    gap: .5rem; margin-bottom: .35rem;
+  }
+  .item-header span { font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em; }
+  #total-box {
+    background:#f5f3ff;border:1.5px solid #ddd6fe;
+    border-radius:8px;padding:.85rem 1.1rem;
+    font-size:.9rem;font-weight:700;color:#7c3aed;text-align:right;margin-top:.5rem;
+  }
+  .btn-nfce { background:#7c3aed;color:#fff;border:none; }
+  .btn-nfce:hover { background:#6d28d9; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form id="form-nota">
+<div class="card">
+  <div class="card-title">1. Emitente</div>
+  <div class="form-group">
+    <label>Emitente *</label>
+    <select name="cliente_id" id="cliente_id" required>
+      <option value="">Selecione o emitente...</option>
+      {% for c in clientes %}
+        <option value="{{ c.id }}">{{ c.id }} — {{ c.razao_social }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem">
+    <div class="form-group">
+      <label>Natureza da Operação</label>
+      <input name="nat_op" id="nat_op" value="Venda a Consumidor">
+    </div>
+    <div class="form-group">
+      <label>Série</label>
+      <input name="serie" id="serie" value="1" type="number" min="1">
+    </div>
+    <div class="form-group">
+      <label>Presença do Comprador</label>
+      <select name="ind_pres" id="ind_pres">
+        <option value="1">1 – Presencial</option>
+        <option value="2">2 – Internet</option>
+        <option value="3">3 – Teleatendimento</option>
+        <option value="4">4 – Entrega a domicílio</option>
+        <option value="9">9 – Outros</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">2. Consumidor <span style="font-weight:400;font-size:.8rem;color:var(--muted)">(opcional)</span></div>
+  <div style="display:grid;grid-template-columns:160px 1fr;gap:1rem;align-items:end;margin-bottom:.75rem">
+    <div class="form-group" style="margin:0">
+      <label>Tipo</label>
+      <select id="tipo_doc" onchange="toggleDoc()">
+        <option value="">Não identificado</option>
+        <option value="cpf">CPF</option>
+        <option value="cnpj">CNPJ</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0" id="campo-doc" hidden>
+      <label id="lbl-doc">CPF</label>
+      <input id="doc_dest" placeholder="Somente números" oninput="mascaraDoc(this)">
+    </div>
+  </div>
+  <div class="form-group" id="campo-nome" hidden>
+    <label>Nome / Razão Social</label>
+    <input id="xNome_dest" placeholder="Nome do consumidor">
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem" id="campo-uf" hidden>
+    <div class="form-group">
+      <label>UF</label>
+      <select id="uf_dest">
+        <option value="">—</option>
+        {% for uf in ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'] %}
+        <option value="{{ uf }}">{{ uf }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>E-mail (opcional)</label>
+      <input id="email_dest" type="email" placeholder="consumidor@email.com">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">3. Itens</div>
+  <div class="item-header">
+    <span>Código</span><span>Descrição</span><span>Qtd</span>
+    <span>Vl. Unit.</span><span>Total</span><span></span>
+  </div>
+  <div id="itens-container"></div>
+  <button type="button" class="btn btn-outline btn-sm" onclick="adicionarItem()" style="margin-top:.5rem">
+    <i class="ti ti-plus"></i> Adicionar Item
+  </button>
+  <div id="total-box">Total: R$ 0,00</div>
+</div>
+
+<div class="card">
+  <div class="card-title">4. Pagamento</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+    <div class="form-group">
+      <label>Forma de Pagamento</label>
+      <select id="tp_pag">
+        <option value="01">01 – Dinheiro</option>
+        <option value="03">03 – Cartão de Crédito</option>
+        <option value="04">04 – Cartão de Débito</option>
+        <option value="05">05 – Crédito Loja</option>
+        <option value="10">10 – Vale Alimentação</option>
+        <option value="11">11 – Vale Refeição</option>
+        <option value="15">15 – Boleto Bancário</option>
+        <option value="99">99 – Outros</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Informações Adicionais</label>
+      <input id="inf_adic" placeholder="Observações da nota (opcional)">
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:1rem;justify-content:flex-end;margin-bottom:2rem">
+  <a href="/admin/notas" class="btn btn-outline">Cancelar</a>
+  <button type="button" class="btn btn-nfce" onclick="salvarNota()">
+    <i class="ti ti-device-floppy"></i> Salvar NFC-e
+  </button>
+</div>
+</form>
+
+<script>
+const PRODUTOS = {{ produtos | tojson }};
+
+function toggleDoc() {
+  const tipo = document.getElementById('tipo_doc').value;
+  document.getElementById('campo-doc').hidden  = !tipo;
+  document.getElementById('campo-nome').hidden = !tipo;
+  document.getElementById('campo-uf').hidden   = !tipo;
+  document.getElementById('lbl-doc').textContent = tipo === 'cnpj' ? 'CNPJ' : 'CPF';
+  document.getElementById('doc_dest').value = '';
+}
+
+function mascaraDoc(el) {
+  let v = el.value.replace(/\D/g,'');
+  const tipo = document.getElementById('tipo_doc').value;
+  if (tipo === 'cpf') {
+    v = v.slice(0,11);
+    v = v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+  } else {
+    v = v.slice(0,14);
+    v = v.replace(/(\d{2})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1/$2').replace(/(\d{4})(\d{1,2})$/,'$1-$2');
+  }
+  el.value = v;
+}
+
+let itemIdx = 0;
+function adicionarItem() {
+  const i = ++itemIdx;
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.id = `item-${i}`;
+  div.innerHTML = `
+    <input placeholder="Cód." id="cod-${i}" oninput="buscarProduto(${i})">
+    <input placeholder="Descrição *" id="desc-${i}" required>
+    <input type="number" value="1" min="0.001" step="any" id="qtd-${i}" oninput="calcTotal()">
+    <input type="number" value="0" min="0" step="any" id="vun-${i}" oninput="calcTotal()" placeholder="0,00">
+    <input readonly id="vtot-${i}" style="background:#f9fafb;font-weight:700">
+    <button type="button" class="btn btn-danger btn-sm" onclick="removerItem(${i})">
+      <i class="ti ti-trash"></i>
+    </button>`;
+  document.getElementById('itens-container').appendChild(div);
+  calcTotal();
+}
+
+function buscarProduto(i) {
+  const cod = document.getElementById(`cod-${i}`).value.trim().toUpperCase();
+  const p   = PRODUTOS.find(x => x.codigo.toUpperCase() === cod);
+  if (!p) return;
+  document.getElementById(`desc-${i}`).value = p.descricao;
+  document.getElementById(`vun-${i}`).value  = parseFloat(p.preco||0).toFixed(2);
+  calcTotal();
+}
+
+function removerItem(i) {
+  document.getElementById(`item-${i}`).remove();
+  calcTotal();
+}
+
+function calcTotal() {
+  let total = 0;
+  document.querySelectorAll('[id^="qtd-"]').forEach(el => {
+    const idx = el.id.split('-')[1];
+    const qtd = parseFloat(el.value)||0;
+    const vun = parseFloat(document.getElementById(`vun-${idx}`).value)||0;
+    const tot = qtd * vun;
+    document.getElementById(`vtot-${idx}`).value = tot.toFixed(2);
+    total += tot;
+  });
+  document.getElementById('total-box').textContent =
+    'Total: R$ ' + total.toFixed(2).replace('.',',').replace(/\B(?=(\d{3})+(?!\d))/g,'.');
+}
+
+function coletarItens() {
+  const itens = [];
+  document.querySelectorAll('[id^="qtd-"]').forEach(el => {
+    const idx  = el.id.split('-')[1];
+    const cod  = document.getElementById(`cod-${idx}`).value.trim();
+    const desc = document.getElementById(`desc-${idx}`).value.trim();
+    if (!desc) return;
+    const qtd  = parseFloat(el.value)||1;
+    const vun  = parseFloat(document.getElementById(`vun-${idx}`).value)||0;
+    const p    = PRODUTOS.find(x => x.codigo === cod) || {};
+    itens.push({
+      nItem: itens.length + 1,
+      cProd: cod || 'ITEM',
+      xProd: desc,
+      NCM:   p.ncm  || '00000000',
+      CFOP:  p.cfop || '5102',
+      uCom:  p.unidade || 'UN',
+      qCom:  qtd,
+      vUnCom: vun,
+      vProd:  (qtd * vun).toFixed(2),
+      CSOSN:  p.csosn || '102',
+      orig:   p.orig  || '0',
+    });
+  });
+  return itens;
+}
+
+async function salvarNota() {
+  const clienteId = document.getElementById('cliente_id').value;
+  if (!clienteId) { alert('Selecione o emitente.'); return; }
+  const itens = coletarItens();
+  if (!itens.length) { alert('Adicione pelo menos um item.'); return; }
+
+  const tipo = document.getElementById('tipo_doc').value;
+  const docVal = (document.getElementById('doc_dest').value||'').replace(/\D/g,'');
+
+  const vTotal = itens.reduce((s,x) => s + parseFloat(x.vProd), 0);
+
+  const body = {
+    cliente_id: clienteId,
+    nat_op:     document.getElementById('nat_op').value,
+    serie:      parseInt(document.getElementById('serie').value)||1,
+    ind_pres:   document.getElementById('ind_pres').value,
+    tp_pag:     document.getElementById('tp_pag').value,
+    cnpj_dest:  tipo === 'cnpj' ? docVal : '',
+    cpf_dest:   tipo === 'cpf'  ? docVal : '',
+    xNome_dest: document.getElementById('xNome_dest').value || 'CONSUMIDOR NAO IDENTIFICADO',
+    uf_dest:    document.getElementById('uf_dest').value,
+    email_dest: document.getElementById('email_dest').value,
+    itens,
+    inf_adic:   document.getElementById('inf_adic').value,
+    v_nf:       vTotal,
+    v_desc:     0,
+  };
+
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  const resp = await fetch('/admin/nfce/nova', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    window.location.href = '/admin/notas';
+  } else {
+    alert('Erro: ' + (data.erro || 'desconhecido'));
+    btn.disabled = false; btn.textContent = 'Salvar NFC-e';
+  }
+}
+
+// Adiciona 1 item inicial
+adicionarItem();
+</script>
+{% endblock %}
