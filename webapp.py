@@ -27,8 +27,14 @@ app.permanent_session_lifetime = timedelta(days=30)
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
 
+def _init_app():
+    try:
+        db.init_db()
+    except Exception as e:
+        print(f"[startup] AVISO: init_db falhou — {e}", flush=True)
+
 with app.app_context():
-    db.init_db()
+    _init_app()
 
 
 def _so_numeros(s: str) -> str:
