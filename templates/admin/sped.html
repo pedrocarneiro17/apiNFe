@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}SPED Fiscal — Emissor Fiscal{% endblock %}
+{% block nav_sped %}active{% endblock %}
+{% block page_title %}SPED Fiscal{% endblock %}
+{% block page_subtitle %}EFD-ICMS/IPI — Geração do arquivo mensal{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:560px">
+  <div class="card-title">Gerar Arquivo EFD-ICMS/IPI</div>
+
+  {% if erro %}
+    <div style="background:#fef2f2;border:1px solid #f5c6c6;color:#a2242b;
+                border-radius:6px;padding:.7rem 1rem;margin-bottom:1rem;font-size:.85rem">
+      {{ erro }}
+    </div>
+  {% endif %}
+
+  <form method="POST">
+    <div class="form-group">
+      <label>Emitente *</label>
+      <select name="cliente_id" required>
+        <option value="">Selecione o emitente...</option>
+        {% for c in clientes %}
+          <option value="{{ c.id }}">{{ c.id }} — {{ c.razao_social }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="form-group">
+        <label>Mês</label>
+        <select name="mes">
+          {% for m, nome in [
+            (1,'Janeiro'),(2,'Fevereiro'),(3,'Março'),(4,'Abril'),
+            (5,'Maio'),(6,'Junho'),(7,'Julho'),(8,'Agosto'),
+            (9,'Setembro'),(10,'Outubro'),(11,'Novembro'),(12,'Dezembro')
+          ] %}
+            <option value="{{ m }}" {% if m == hoje.month %}selected{% endif %}>
+              {{ '%02d'|format(m) }} — {{ nome }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Ano</label>
+        <select name="ano">
+          {% for a in range(hoje.year, hoje.year - 5, -1) %}
+            <option value="{{ a }}" {% if a == hoje.year %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;
+                padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
+      <strong>Como usar:</strong> Baixe o arquivo <code>.txt</code> gerado e abra no
+      <strong>PVA SPED Fiscal</strong> (Programa Validador e Assinador da Receita Federal)
+      para validar, assinar com certificado digital e transmitir.
+    </div>
+
+    <button type="submit" class="btn btn-primary">
+      <i class="ti ti-download"></i> Gerar e Baixar .txt
+    </button>
+  </form>
+</div>
+
+<div class="card" style="max-width:560px">
+  <div class="card-title">Blocos gerados</div>
+  <table>
+    <thead>
+      <tr><th>Bloco</th><th>Conteúdo</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>0</strong></td><td>Abertura, identificação, participantes, produtos</td></tr>
+      <tr><td><strong>C</strong></td><td>NF-e (mod 55) e NFC-e (mod 65) emitidas no período</td></tr>
+      <tr><td><strong>E</strong></td><td>Apuração do ICMS do período</td></tr>
+      <tr><td><strong>9</strong></td><td>Controle de registros e encerramento</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:.78rem;color:var(--muted);margin-top:.75rem">
+    Somente notas com status <strong>emitido</strong> são incluídas no arquivo.
+  </p>
+</div>
+{% endblock %}

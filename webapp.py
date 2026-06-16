@@ -577,6 +577,52 @@ def health():
     return {"status": "ok"}, 200
 
 
+# ── SPED Fiscal ───────────────────────────────────────────────────────────────
+
+@app.route("/admin/sped", methods=["GET", "POST"])
+@_requer_login
+def sped_fiscal():
+    clientes = db.listar_clientes()
+    hoje = datetime.now()
+
+    if request.method == "POST":
+        cliente_id = request.form.get("cliente_id", "")
+        ano  = int(request.form.get("ano",  hoje.year))
+        mes  = int(request.form.get("mes",  hoje.month))
+
+        cliente = next((c for c in db.listar_clientes() if c["id"] == cliente_id), None)
+        if not cliente:
+            return render_template("admin/sped.html", clientes=clientes,
+                                   erro="Emitente não encontrado.", hoje=hoje)
+
+        notas = db.listar_notas(cliente_id=cliente_id)
+        # filtra pelo mês/ano e deserializa itens
+        notas_mes = []
+        for n in notas:
+            criado = str(n.get("criado_em", ""))[:7]  # "YYYY-MM"
+            if criado == f"{ano}-{mes:02d}":
+                if isinstance(n.get("itens"), str):
+                    try:
+                        n["itens"] = json.loads(n["itens"])
+                    except Exception:
+                        n["itens"] = []
+                notas_mes.append(n)
+
+        from sped_fiscal import gerar_efd
+        txt = gerar_efd(cliente, notas_mes, ano=ano, mes=mes)
+
+        nome_arq = f"EFD_{_so_numeros(cliente.get('cnpj',''))}_{ano}{mes:02d}.txt"
+        from io import BytesIO
+        return send_file(
+            BytesIO(txt),
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=nome_arq,
+        )
+
+    return render_template("admin/sped.html", clientes=clientes, hoje=hoje)
+
+
 if __name__ == "__main__":
     print("Acesse: http://localhost:5000/admin/notas")
     app.run(debug=False, port=5000)
