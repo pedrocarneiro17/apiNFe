@@ -24,6 +24,9 @@ app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "nfe_webapp_2025")
 app.permanent_session_lifetime = timedelta(days=30)
 
+from api import api_bp
+app.register_blueprint(api_bp)
+
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
 

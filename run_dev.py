@@ -10,6 +10,7 @@ os.environ.setdefault("NFE_AMBIENTE", "2")
 os.environ.setdefault("ADMIN_USER",   "admin")
 os.environ.setdefault("ADMIN_PASS",   "admin")
 os.environ.setdefault("SECRET_KEY",   "dev-secret-nfe-2025")
+os.environ.setdefault("API_KEY",      "dev-api-key")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "dev.db")
 
@@ -135,6 +136,20 @@ def _init_sqlite():
                 v_desc REAL DEFAULT 0, v_frete REAL DEFAULT 0,
                 status TEXT DEFAULT 'pendente', observacao TEXT DEFAULT '',
                 arquivo_xml TEXT DEFAULT '', modelo INTEGER DEFAULT 55,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_emissoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                emitente_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                modelo INTEGER NOT NULL, chave TEXT DEFAULT '',
+                n_prot TEXT DEFAULT '', nota_id INTEGER, xml_path TEXT DEFAULT '',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (emitente_id, idempotency_key)
+            );
+            CREATE TABLE IF NOT EXISTS api_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT, metodo TEXT, endpoint TEXT, emitente_id TEXT,
+                status_code INTEGER, sucesso INTEGER, erro TEXT, duracao_ms INTEGER,
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)

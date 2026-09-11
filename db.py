@@ -136,6 +136,32 @@ def init_db():
                     modelo          INTEGER DEFAULT 55,
                     criado_em       TIMESTAMP DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS api_emissoes (
+                    id              SERIAL PRIMARY KEY,
+                    emitente_id     TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    modelo          INTEGER NOT NULL,
+                    chave           TEXT DEFAULT '',
+                    n_prot          TEXT DEFAULT '',
+                    nota_id         INTEGER,
+                    xml_path        TEXT DEFAULT '',
+                    criado_em       TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (emitente_id, idempotency_key)
+                );
+
+                CREATE TABLE IF NOT EXISTS api_logs (
+                    id             SERIAL PRIMARY KEY,
+                    request_id     TEXT,
+                    metodo         TEXT,
+                    endpoint       TEXT,
+                    emitente_id    TEXT,
+                    status_code    INTEGER,
+                    sucesso        BOOLEAN,
+                    erro           TEXT,
+                    duracao_ms     INTEGER,
+                    criado_em      TIMESTAMP DEFAULT NOW()
+                );
             """)
 
     migracoes = [
@@ -433,3 +459,71 @@ def update_nota_cancelada(nota_id: int):
             cur.execute(
                 "UPDATE notas SET status='cancelado' WHERE id=%s", (nota_id,)
             )
+
+
+def get_nota_por_chave(chave: str):
+    """Localiza a nota (emitida pela API ou pelo admin) por chave de acesso —
+    usado pela API pra cancelar/gerar DANFE sem o chamador reenviar dados."""
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute("""
+                SELECT n.*, c.razao_social, c.cnpj as cnpj_emit,
+                       c.uf, c.ie, c.crt, c.xLgr, c.nro, c.xCpl,
+                       c.xBairro, c.cMun, c.xMun, c.cep, c.fone,
+                       c.caminho_certificado, c.senha_certificado,
+                       c.serie as serie_emit, c.xFant, c.id_csc, c.csc
+                FROM notas n
+                LEFT JOIN clientes c ON c.id = n.cliente_id
+                WHERE n.chave = %s
+                ORDER BY n.id DESC LIMIT 1
+            """, (chave,))
+            r = _row(cur)
+            if r and isinstance(r.get("itens"), str):
+                r["itens"] = json.loads(r["itens"])
+            return r
+
+
+# ── Idempotência da API (evita duplicar número em retentativas) ────
+
+def buscar_emissao_idempotente(emitente_id: str, idempotency_key: str):
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                "SELECT * FROM api_emissoes WHERE emitente_id=%s AND idempotency_key=%s",
+                (emitente_id, idempotency_key),
+            )
+            return _row(cur)
+
+
+def registrar_emissao_idempotente(emitente_id: str, idempotency_key: str, modelo: int,
+                                   chave: str, n_prot: str, nota_id: int, xml_path: str):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO api_emissoes
+                    (emitente_id, idempotency_key, modelo, chave, n_prot, nota_id, xml_path)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (emitente_id, idempotency_key) DO NOTHING
+            """, (emitente_id, idempotency_key, modelo, chave, n_prot, nota_id, xml_path))
+
+
+# ── Log de chamadas da API (auditoria/diagnóstico) ──────────────────
+
+def registrar_api_log(rec: dict):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO api_logs
+                    (request_id, metodo, endpoint, emitente_id, status_code,
+                     sucesso, erro, duracao_ms)
+                VALUES (%(request_id)s, %(metodo)s, %(endpoint)s, %(emitente_id)s,
+                        %(status_code)s, %(sucesso)s, %(erro)s, %(duracao_ms)s)
+            """, rec)
+
+
+def listar_api_logs(limit: int = 200, apenas_erros: bool = False):
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            where = "WHERE sucesso = FALSE" if apenas_erros else ""
+            cur.execute(f"SELECT * FROM api_logs {where} ORDER BY id DESC LIMIT %s", (limit,))
+            return _rows(cur)
