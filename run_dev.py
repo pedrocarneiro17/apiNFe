@@ -32,14 +32,14 @@ class _DictCursor:
         self._cur.executescript(sql)
 
     def fetchone(self):
-        row = self._cur.fetchone()
-        if row is None: return None
-        cols = [d[0] for d in self._cur.description]
-        return dict(zip(cols, row))
+        # Retorna o sqlite3.Row cru (não um dict) — ele aceita tanto índice
+        # posicional (row[0], usado por ex. em "RETURNING id") quanto por
+        # nome de coluna (row["id"]), igual o psycopg2 faz por caminhos
+        # diferentes dependendo do cursor_factory usado.
+        return self._cur.fetchone()
 
     def fetchall(self):
-        cols = [d[0] for d in self._cur.description] if self._cur.description else []
-        return [dict(zip(cols, r)) for r in self._cur.fetchall()]
+        return self._cur.fetchall()
 
     @property
     def description(self):
@@ -72,7 +72,16 @@ _shared_conn = _SQLiteConn(DB_PATH)
 
 @contextlib.contextmanager
 def _sqlite_conn():
-    yield _shared_conn
+    # Precisa comitar (ou reverter, em caso de erro) igual o _get_conn()
+    # original do db.py faz — sem isso, nada gravado pelo app persistia de
+    # verdade no arquivo .db (só ficava visível dentro da própria conexão
+    # aberta, e se perdia ao reiniciar o servidor).
+    try:
+        yield _shared_conn
+        _shared_conn._conn.commit()
+    except Exception:
+        _shared_conn._conn.rollback()
+        raise
 
 # Patcha _get_conn e _dict_cursor (os hooks usados por todas as funcoes de db.py)
 _db._get_conn = _sqlite_conn
@@ -139,6 +148,9 @@ def _init_sqlite():
             "ALTER TABLE notas ADD COLUMN modelo INTEGER DEFAULT 55",
             "ALTER TABLE clientes ADD COLUMN id_csc TEXT DEFAULT '000001'",
             "ALTER TABLE clientes ADD COLUMN csc TEXT DEFAULT ''",
+            "ALTER TABLE clientes ADD COLUMN numero_nfce INTEGER DEFAULT 1",
+            "ALTER TABLE notas ADD COLUMN fin_nfe TEXT DEFAULT '1'",
+            "ALTER TABLE notas ADD COLUMN ref_nfe TEXT DEFAULT ''",
         ]:
             try:
                 cur.execute(col_sql)
@@ -150,7 +162,7 @@ def _init_sqlite():
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM clientes", ())
         row = cur.fetchone()
-        count = list(row.values())[0] if row else 0
+        count = row[0] if row else 0
         if count == 0:
             cur.execute("""
                 INSERT INTO clientes (id, razao_social, cnpj, ie, crt, uf, cuf,
@@ -219,13 +231,15 @@ _db._row = _row_sq
 _db._rows = _rows_sq
 
 # Patch proximo_numero_nfe para SQLite (sem RETURNING em versões antigas)
-def _proximo_nfe(cliente_id):
+# NF-e (55) e NFC-e (65) sao series independentes -> colunas separadas.
+def _proximo_nfe(cliente_id, modelo=55):
+    coluna = "numero_nfe" if modelo == 55 else "numero_nfce"
     with _sqlite_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT numero_nfe FROM clientes WHERE id=%s", (cliente_id,))
+        cur.execute(f"SELECT {coluna} FROM clientes WHERE id=%s", (cliente_id,))
         row = cur.fetchone()
-        num = row["numero_nfe"] if row else 1
-        cur.execute("UPDATE clientes SET numero_nfe=numero_nfe+1 WHERE id=%s", (cliente_id,))
+        num = row[coluna] if row else 1
+        cur.execute(f"UPDATE clientes SET {coluna}={coluna}+1 WHERE id=%s", (cliente_id,))
         conn.commit()
     return num
 
@@ -277,8 +291,9 @@ def _emitir_simulado(dados):
         <tpNF>{dados.get('tp_nf','1')}</tpNF><idDest>1</idDest>
         <cMunFG>{dados.get('cMun','3550308')}</cMunFG>
         <tpImp>1</tpImp><tpEmis>1</tpEmis><cDV>{dv}</cDV>
-        <tpAmb>2</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal>
+        <tpAmb>2</tpAmb><finNFe>{dados.get('fin_nfe','1')}</finNFe><indFinal>1</indFinal>
         <indPres>1</indPres><procEmi>0</procEmi><verProc>DEV-1.0</verProc>
+        {f"<NFref><refNFe>{dados.get('ref_nfe')}</refNFe></NFref>" if dados.get('ref_nfe') else ""}
       </ide>
       <emit>
         <CNPJ>{cnpj}</CNPJ>

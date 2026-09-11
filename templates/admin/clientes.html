@@ -162,6 +162,21 @@
           Deixe em branco para manter a senha atual ao editar.
         </div>
 
+        <div class="section-label">CSC (NFC-e)</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Identificador CSC</label>
+            <input type="text" name="id_csc" id="f-idcsc" maxlength="6" placeholder="000001">
+          </div>
+          <div class="form-group">
+            <label>Código CSC (Token)</label>
+            <input type="password" name="csc" id="f-csc" autocomplete="new-password">
+          </div>
+        </div>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:-.4rem;margin-bottom:.8rem">
+          Obtido no portal da SEFAZ do estado. Necessário apenas para emitir NFC-e (modelo 65). Deixe em branco para manter o valor atual ao editar.
+        </div>
+
         <div style="display:flex;gap:.75rem;justify-content:flex-end">
           <button type="button" class="btn btn-outline" onclick="limparForm()">Cancelar</button>
           <button type="submit" class="btn btn-primary">
@@ -227,8 +242,10 @@ function editarEmitente(c) {
   document.getElementById('f-cmun').value     = c.cmun || '';
   document.getElementById('f-xmun').value     = c.xmun || '';
   document.querySelector('[name=fone]').value  = c.fone || '';
+  document.getElementById('f-idcsc').value    = c.id_csc || '';
   document.getElementById('cert-upload-area').style.display = '';
   document.getElementById('f-cert-senha').value = '';
+  document.getElementById('f-csc').value = '';
   document.getElementById('form-card').scrollIntoView({behavior:'smooth'});
 }
 

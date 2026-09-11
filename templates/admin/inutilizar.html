@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Inutilização de Numeração — Emissor Fiscal{% endblock %}
+{% block nav_inutilizar %}active{% endblock %}
+{% block page_title %}Inutilização de Numeração{% endblock %}
+{% block page_subtitle %}Baixa formal de números de NF-e/NFC-e que nunca foram autorizados{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:560px">
+  <div class="card-title">Solicitar Inutilização</div>
+
+  {% if erro %}
+    <div class="alert alert-danger">{{ erro }}</div>
+  {% endif %}
+
+  {% if resultado %}
+    <div class="alert {{ 'alert-success' if sucesso else 'alert-danger' }}">
+      <strong>[{{ resultado.cStat }}]</strong> {{ resultado.xMotivo }}
+    </div>
+  {% endif %}
+
+  <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;
+              padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
+    <strong>Quando usar:</strong> quando um número de NF-e/NFC-e foi pulado
+    (ex: falha antes de gerar a chave, ou número reservado indevidamente) e
+    <strong>nunca chegou a ser autorizado</strong>. A SEFAZ exige essa baixa
+    formal — não dá pra simplesmente deixar o furo na numeração.
+  </div>
+
+  <form method="POST">
+    <div class="form-group">
+      <label>Emitente *</label>
+      <select name="cliente_id" required>
+        <option value="">Selecione o emitente...</option>
+        {% for c in clientes %}
+          <option value="{{ c.id }}" {% if form and form.cliente_id == c.id %}selected{% endif %}>
+            {{ c.id }} — {{ c.razao_social }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Modelo *</label>
+        <select name="modelo" required>
+          <option value="55" {% if form and form.modelo == '55' %}selected{% endif %}>55 — NF-e</option>
+          <option value="65" {% if form and form.modelo == '65' %}selected{% endif %}>65 — NFC-e</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Série *</label>
+        <input type="number" name="serie" min="1" max="889"
+               value="{{ form.serie if form else 1 }}" required>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Ano *</label>
+        <select name="ano" required>
+          {% for a in range(hoje.year, hoje.year - 5, -1) %}
+            <option value="{{ a }}" {% if (form and form.ano|string == a|string) or (not form and a == hoje.year) %}selected{% endif %}>{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Número Inicial *</label>
+        <input type="number" name="nnf_ini" min="1" required
+               value="{{ form.nnf_ini if form else '' }}">
+      </div>
+      <div class="form-group">
+        <label>Número Final *</label>
+        <input type="number" name="nnf_fin" min="1" required
+               value="{{ form.nnf_fin if form else '' }}">
+      </div>
+    </div>
+    <div style="font-size:.75rem;color:var(--muted-fg);margin-top:-.6rem;margin-bottom:.9rem">
+      Pra inutilizar só um número, informe o mesmo valor nos dois campos.
+    </div>
+
+    <div class="form-group">
+      <label>Justificativa * (mín. 15 caracteres)</label>
+      <textarea name="justificativa" required minlength="15"
+                placeholder="Ex: numero pulado por falha no sistema antes da autorizacao">{{ form.justificativa if form else '' }}</textarea>
+    </div>
+
+    <button type="submit" class="btn btn-primary">
+      <i class="ti ti-eraser"></i> Solicitar Inutilização
+    </button>
+  </form>
+</div>
+{% endblock %}

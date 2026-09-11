@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from lxml import etree
 from signxml import XMLSigner, methods
+from signxml.util import namespaces as signxml_namespaces
 import requests
 
 
@@ -87,8 +88,8 @@ _AUTORIZADORES: dict[str, dict[str, str]] = {
 # ─── Roteamento por UF — NFC-e modelo 65 ─────────────────────────
 # Estados com autorizador próprio; demais usam SVRSN (SVRS para NFC-e)
 _AUTORIZADORES_NFCE: dict[str, dict[str, str]] = {
-    "MG":    {"prod": "https://nfce.fazenda.mg.gov.br/portalnfce/system/webservices/ws/",
-              "homo": "https://hnfce.fazenda.mg.gov.br/portalnfce/system/webservices/ws/"},
+    "MG":    {"prod": "https://nfce.fazenda.mg.gov.br/nfce/services/",
+              "homo": "https://hnfce.fazenda.mg.gov.br/nfce/services/"},
     "MS":    {"prod": "https://nfce.fazenda.ms.gov.br/ws/",
               "homo": "https://hom.nfce.fazenda.ms.gov.br/ws/"},
     "MT":    {"prod": "https://nfce.sefaz.mt.gov.br/nfcews/v2/services/",
@@ -116,8 +117,10 @@ _UF_AUTORIZADOR_NFCE: dict[str, str] = {
 
 # URL do portal de consulta NFC-e por UF (para o QR Code)
 _URL_CONSULTA_NFCE: dict[str, dict[str, str]] = {
-    "MG": {"prod": "https://portalsped.fazenda.mg.gov.br/portalnfce/system/pages/consultarNota/index.xhtml",
-           "homo": "https://portalhomolog.fazenda.mg.gov.br/portalnfce/system/pages/consultarNota/index.xhtml"},
+    # A SEFAZ valida urlChave contra um endereço esperado exato (não é só
+    # formato/tamanho) — homologação usa "hportalsped", não "portalhomolog".
+    "MG": {"prod": "https://portalsped.fazenda.mg.gov.br/portalnfce",
+           "homo": "https://hportalsped.fazenda.mg.gov.br/portalnfce"},
     "MS": {"prod": "https://www.dfe.ms.gov.br/nfce/qrcode",
            "homo": "https://www.dfe.ms.gov.br/nfce/qrcode"},
     "MT": {"prod": "https://www.sefaz.mt.gov.br/nfce/consultanfce",
@@ -187,9 +190,29 @@ def _url_servico_nfce(uf: str, servico: str) -> str:
 
 
 def _url_consulta_nfce(uf: str) -> str:
-    """URL do portal de consulta NFC-e (usada no QR Code)."""
+    """URL do portal de consulta por chave de acesso (campo urlChave)."""
     env = "prod" if _is_prod() else "homo"
     return _URL_CONSULTA_NFCE.get(uf.upper(), _URL_CONSULTA_NFCE_PADRAO)[env]
+
+
+# URL usada DENTRO do conteúdo do QR Code — a SEFAZ valida contra um
+# endereço esperado exato, que não é necessariamente o mesmo do urlChave.
+# Fonte: ENCAT (nfce.encat.org/desenvolvedor/qrcode/) — em MG essa URL é a
+# MESMA em produção e homologação (diferente do urlChave, que usa
+# "hportalsped" só em homologação).
+_URL_QRCODE_NFCE: dict[str, dict[str, str]] = {
+    "MG": {"prod": "https://portalsped.fazenda.mg.gov.br/portalnfce/sistema/qrcode.xhtml",
+           "homo": "https://portalsped.fazenda.mg.gov.br/portalnfce/sistema/qrcode.xhtml"},
+}
+
+
+def _url_qrcode_nfce(uf: str) -> str:
+    """URL base usada no conteúdo do QR Code (pode diferir do urlChave)."""
+    env = "prod" if _is_prod() else "homo"
+    uf_dict = _URL_QRCODE_NFCE.get(uf.upper())
+    if uf_dict:
+        return uf_dict[env]
+    return _url_consulta_nfce(uf)
 
 
 def _pfx_para_pem(caminho_pfx: str, senha: str):
@@ -242,6 +265,83 @@ def _sub(pai, tag: str, texto=None):
     if texto is not None:
         el.text = str(texto)
     return el
+
+
+# ─── IBS/CBS — Reforma Tributária (LC 214/2025) ──────────────────
+#
+# 2026 é o "ano-teste": o schema já aceita os grupos IBS/CBS por item
+# (imposto/IBSCBS) e nos totais (total/IBSCBSTot), mas ambos são opcionais
+# (minOccurs="0") — por isso as emissões anteriores validaram sem eles.
+#
+# Os valores abaixo são PLACEHOLDER (zerados/genéricos), só pra deixar a
+# estrutura do XML pronta. CST="000" (tributação integral) e
+# cClassTrib="000001" são códigos de uso comum, mas PRECISAM ser confirmados
+# com o contador antes de qualquer emissão real — são dados tributários,
+# não uma decisão técnica do sistema.
+_IBSCBS_CST_PADRAO        = "000"
+_IBSCBS_CCLASSTRIB_PADRAO = "000001"
+
+# Alíquotas de teste do "ano-teste" 2026 — SÓ PARA VALIDAR SE A SEFAZ ACEITA
+# O FORMATO. A SEFAZ rejeita alíquota zerada (cStat 1026), mas estes números
+# NÃO são o valor fiscal correto: não substituem confirmação com o contador
+# antes de qualquer emissão real.
+_IBSCBS_P_IBS_UF_TESTE  = 0.10   # % — em 2026 o IBS municipal ainda não é cobrado
+_IBSCBS_P_IBS_MUN_TESTE = 0.00   # % (só passa a valer a partir de 2027)
+_IBSCBS_P_CBS_TESTE     = 0.90   # %
+
+
+def _montar_ibscbs_item(imposto_element, item: dict, v_bc: float) -> float:
+    """Grupo <IBSCBS> por item (dentro de <imposto>). Retorna o vBC usado,
+    para acumular em <IBSCBSTot>."""
+    p_ibs_uf  = float(item.get("pIBSUF",  _IBSCBS_P_IBS_UF_TESTE))
+    p_ibs_mun = float(item.get("pIBSMun", _IBSCBS_P_IBS_MUN_TESTE))
+    p_cbs     = float(item.get("pCBS",    _IBSCBS_P_CBS_TESTE))
+    v_ibs_uf  = v_bc * p_ibs_uf  / 100
+    v_ibs_mun = v_bc * p_ibs_mun / 100
+    v_ibs     = v_ibs_uf + v_ibs_mun
+    v_cbs     = v_bc * p_cbs / 100
+
+    ibscbs = _sub(imposto_element, "IBSCBS")
+    _sub(ibscbs, "CST", item.get("CST_IBSCBS", _IBSCBS_CST_PADRAO))
+    _sub(ibscbs, "cClassTrib", item.get("cClassTrib_IBSCBS", _IBSCBS_CCLASSTRIB_PADRAO))
+    g_ibscbs = _sub(ibscbs, "gIBSCBS")
+    _sub(g_ibscbs, "vBC", f"{v_bc:.2f}")
+    g_ibs_uf = _sub(g_ibscbs, "gIBSUF")
+    _sub(g_ibs_uf, "pIBSUF", f"{p_ibs_uf:.2f}")
+    _sub(g_ibs_uf, "vIBSUF", f"{v_ibs_uf:.2f}")
+    g_ibs_mun = _sub(g_ibscbs, "gIBSMun")
+    _sub(g_ibs_mun, "pIBSMun", f"{p_ibs_mun:.2f}")
+    _sub(g_ibs_mun, "vIBSMun", f"{v_ibs_mun:.2f}")
+    _sub(g_ibscbs, "vIBS", f"{v_ibs:.2f}")
+    g_cbs = _sub(g_ibscbs, "gCBS")
+    _sub(g_cbs, "pCBS", f"{p_cbs:.2f}")
+    _sub(g_cbs, "vCBS", f"{v_cbs:.2f}")
+    return v_bc
+
+
+def _montar_ibscbs_total(total_element, v_bc_total: float):
+    """<IBSCBSTot>, irmão de <ICMSTot> dentro de <total> — só o campo
+    obrigatório (vBCIBSCBS); os subgrupos de totalização (gIBS/gCBS/gMono)
+    são opcionais e ficam de fora enquanto os valores reais não existem."""
+    tot = _sub(total_element, "IBSCBSTot")
+    _sub(tot, "vBCIBSCBS", f"{v_bc_total:.2f}")
+
+
+def _montar_nfref(ide_element, dados: dict):
+    """
+    Grupo <NFref> — referência a nota(s) fiscal(is) anterior(es), obrigatório
+    em devolução (a chave da nota original que está sendo devolvida).
+    dados['ref_nfe']: chave de 44 dígitos (str) ou lista de chaves.
+    """
+    refs = dados.get("ref_nfe") or []
+    if isinstance(refs, str):
+        refs = [refs] if refs else []
+    for chave_ref in refs:
+        chave_ref = _so_numeros(chave_ref)
+        if len(chave_ref) != 44:
+            continue
+        nfref = _sub(ide_element, "NFref")
+        _sub(nfref, "refNFe", chave_ref)
 
 
 def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
@@ -298,7 +398,7 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
 
     chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis)
 
-    nfe = etree.Element(f"{{{NS}}}NFe", xmlns=NS)
+    nfe = etree.Element(f"{{{NS}}}NFe", nsmap={None: NS})
     inf = etree.SubElement(nfe, f"{{{NS}}}infNFe",
                            Id=f"NFe{chave}", versao="4.00")
 
@@ -308,8 +408,8 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ide, "cNF",     chave[35:43])  # 8 dígitos do cNF (posição 35-42)
     _sub(ide, "natOp",   dados.get("nat_op", "Venda"))
     _sub(ide, "mod",     mod)
-    _sub(ide, "serie",   f"{serie:03d}")
-    _sub(ide, "nNF",     f"{nnf:09d}")
+    _sub(ide, "serie",   str(serie))
+    _sub(ide, "nNF",     str(nnf))
     _sub(ide, "dhEmi",   datetime.now(timezone(timedelta(hours=-3)))
                                   .strftime("%Y-%m-%dT%H:%M:%S-03:00"))
     _sub(ide, "tpNF",    dados.get("tp_nf", "1"))
@@ -324,6 +424,7 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ide, "indPres",  dados.get("ind_pres", "1"))
     _sub(ide, "procEmi",  "0")
     _sub(ide, "verProc",  dados.get("ver_proc", "1.0.0"))
+    _montar_nfref(ide, dados)
 
     # ── Grupo C: Emitente ─────────────────────────────────────────
     emit = _sub(inf, "emit")
@@ -445,6 +546,9 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
             _sub(cofinsal, "pCOFINS",  f"{float(item.get('pCOFINS', 3.0)):.2f}")
             _sub(cofinsal, "vCOFINS",  f"{v_prod * float(item.get('pCOFINS', 3.0)) / 100:.2f}")
 
+        # IBS/CBS — Reforma Tributária (ver comentário em _montar_ibscbs_item)
+        _montar_ibscbs_item(imposto, item, v_prod)
+
     # ── Grupo W: Totalizadores ────────────────────────────────────
     total  = _sub(inf, "total")
     ictot  = _sub(total, "ICMSTot")
@@ -468,6 +572,7 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ictot, "vCOFINS","0.00")
     _sub(ictot, "vOutro", "0.00")
     _sub(ictot, "vNF",    f"{v_nf:.2f}")
+    _montar_ibscbs_total(total, v_prod_total)
 
     # ── Grupo X: Transporte ───────────────────────────────────────
     transp = _sub(inf, "transp")
@@ -493,12 +598,31 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
 
 # ─── Assinatura XMLDSIG (RSA-SHA1 — exigido pelo MOC NF-e 4.00) ──
 
+class _XMLSignerSEFAZ(XMLSigner):
+    """
+    XMLSigner ajustado às exigências da SEFAZ:
+      - permite RSA-SHA1: o signxml recusa SHA-1 por padrão (algoritmo inseguro
+        para uso geral), mas o MOC NF-e 4.00 exige exatamente esse algoritmo —
+        não é uma escolha nossa, é o que a SEFAZ aceita.
+      - remove o prefixo "ds:" do bloco <Signature>: a SEFAZ rejeita qualquer
+        prefixo de namespace na mensagem (erro "Uso de prefixo de namespace
+        não permitido"), então a assinatura precisa sair como
+        <Signature xmlns="http://www.w3.org/2000/09/xmldsig#"> sem prefixo.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.namespaces = {None: signxml_namespaces.ds}
+
+    def check_deprecated_methods(self):
+        pass
+
+
 def assinar_nfe(nfe_element: etree._Element, chave_privada, certificado) -> etree._Element:
     """
     Assina a tag <infNFe> com RSA-SHA1 (padrão exigido pela SEFAZ).
     Retorna o elemento <NFe> com <Signature> inserida.
     """
-    signer = XMLSigner(
+    signer = _XMLSignerSEFAZ(
         method=methods.enveloped,
         signature_algorithm="rsa-sha1",
         digest_algorithm="sha1",
@@ -508,7 +632,7 @@ def assinar_nfe(nfe_element: etree._Element, chave_privada, certificado) -> etre
     signed = signer.sign(
         nfe_element,
         key=chave_privada,
-        cert=certificado,
+        cert=[certificado],
         reference_uri=inf_id,
     )
     return signed
@@ -516,7 +640,7 @@ def assinar_nfe(nfe_element: etree._Element, chave_privada, certificado) -> etre
 
 def assinar_evento(env_element: etree._Element, chave_privada, certificado) -> etree._Element:
     """Assina a tag <infEvento> do envelope de eventos."""
-    signer = XMLSigner(
+    signer = _XMLSignerSEFAZ(
         method=methods.enveloped,
         signature_algorithm="rsa-sha1",
         digest_algorithm="sha1",
@@ -526,7 +650,7 @@ def assinar_evento(env_element: etree._Element, chave_privada, certificado) -> e
     return signer.sign(
         env_element,
         key=chave_privada,
-        cert=certificado,
+        cert=[certificado],
         reference_uri=inf_id,
     )
 
@@ -638,20 +762,23 @@ def _montar_proc_nfe(nfe_str: str, prot_xml: str) -> bytes:
 def cancelar_nfe(chave: str, n_prot: str, justificativa: str,
                  uf: str, cnpj: str,
                  cert_path: str, key_path: str,
-                 chave_privada, certificado) -> dict:
+                 chave_privada, certificado, modelo: int = 55) -> dict:
     """
     Registra evento de cancelamento (tpEvento=110111).
     Prazo: 24h após autorização (antes da circulação da mercadoria).
+
+    modelo: 55 (NF-e) ou 65 (NFC-e) — o evento de cancelamento é enviado
+    pelo autorizador do MESMO modelo da nota (a chave de acesso já indica
+    o modelo, mas quem decide a rota é este parâmetro).
     """
     cuf      = _UF_IBGE[uf.upper()]
     dh_evento = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%dT%H:%M:%S-03:00")
     id_evento = f"ID110111{chave}01"
 
-    env = etree.Element(f"{{{NS}}}envEvento", versao="1.00")
+    env = etree.Element(f"{{{NS}}}envEvento", versao="1.00", nsmap={None: NS})
     _sub(env, "idLote", "1")
-    evento = _sub(env, "evento", versao="1.00")
-    inf_ev = etree.SubElement(evento, f"{{{NS}}}infEvento",
-                              Id=id_evento, versao="1.00")
+    evento = etree.SubElement(env, f"{{{NS}}}evento", versao="1.00")
+    inf_ev = etree.SubElement(evento, f"{{{NS}}}infEvento", Id=id_evento)
     _sub(inf_ev, "cOrgao",     cuf)
     _sub(inf_ev, "tpAmb",      _tp_amb())
     _sub(inf_ev, "CNPJ",       _so_numeros(cnpj))
@@ -660,21 +787,90 @@ def cancelar_nfe(chave: str, n_prot: str, justificativa: str,
     _sub(inf_ev, "tpEvento",   "110111")
     _sub(inf_ev, "nSeqEvento", "1")
     _sub(inf_ev, "verEvento",  "1.00")
-    det = _sub(inf_ev, "detEvento", versao="1.00")
+    det = etree.SubElement(inf_ev, f"{{{NS}}}detEvento", versao="1.00")
     _sub(det, "descEvento", "Cancelamento")
     _sub(det, "nProt",      n_prot)
     _sub(det, "xJust",      justificativa)
 
-    env_assinado = assinar_evento(env, chave_privada, certificado)
-    env_str      = etree.tostring(env_assinado, encoding="unicode")
+    # A assinatura tem que ficar DENTRO de <evento> (irmã de infEvento), não
+    # em <envEvento> — por isso assinamos o sub-elemento "evento", não o
+    # envelope inteiro.
+    evento_assinado = assinar_evento(evento, chave_privada, certificado)
+    if evento_assinado is not evento:
+        env.replace(evento, evento_assinado)
+    env_str = etree.tostring(env, encoding="unicode")
 
-    url  = _url_servico(uf, "NFeRecepcaoEvento4")
+    url  = (_url_servico_nfce(uf, "NFeRecepcaoEvento4") if modelo == 65
+            else _url_servico(uf, "NFeRecepcaoEvento4"))
     resp = _enviar_soap(url, "NFeRecepcaoEvento4", cuf, env_str, cert_path, key_path)
     body = _extrair_body(resp)
     ns   = {"nfe": NS}
-    cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
-    xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    # cStat do lote (retEnvEvento) vs. cStat do evento em si (infEvento) —
+    # o segundo é o que diz se o cancelamento foi homologado ou não.
+    cstat = body.findtext(".//nfe:infEvento/nfe:cStat",   namespaces=ns) \
+         or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:infEvento/nfe:xMotivo", namespaces=ns) \
+         or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
     print(f"[nfe] Cancelamento: cStat={cstat} | {xmot}", flush=True)
+    return {"cStat": cstat, "xMotivo": xmot}
+
+
+# ─── Inutilização de Numeração ────────────────────────────────────
+
+def inutilizar_numeracao(uf: str, cnpj: str, ano: int, modelo: int,
+                          serie: int, nnf_ini: int, nnf_fin: int,
+                          justificativa: str,
+                          cert_path: str, key_path: str,
+                          chave_privada, certificado) -> dict:
+    """
+    Inutiliza uma faixa de numeração de NF-e/NFC-e que nunca foi usada
+    (NFeInutilizacao4) — obrigatório sempre que um número é pulado antes de
+    ser autorizado (não dá pra simplesmente ignorar o furo na sequência).
+
+    ano: ano de 4 dígitos (ex: 2026) — convertido para 2 dígitos no XML.
+    modelo: 55 (NF-e) ou 65 (NFC-e).
+    justificativa: mínimo de 15 caracteres (exigência da SEFAZ).
+    """
+    cuf  = _UF_IBGE[uf.upper()]
+    cnpj_num = _so_numeros(cnpj)
+    ano2 = ano % 100
+    id_inut = (f"ID{cuf:02d}{ano2:02d}{cnpj_num:0>14}{modelo:02d}"
+               f"{serie:03d}{nnf_ini:09d}{nnf_fin:09d}")
+
+    inut = etree.Element(f"{{{NS}}}inutNFe", versao="4.00", nsmap={None: NS})
+    inf  = etree.SubElement(inut, f"{{{NS}}}infInut", Id=id_inut)
+    _sub(inf, "tpAmb",  _tp_amb())
+    _sub(inf, "xServ",  "INUTILIZAR")
+    _sub(inf, "cUF",    cuf)
+    _sub(inf, "ano",    f"{ano2:02d}")
+    _sub(inf, "CNPJ",   cnpj_num)
+    _sub(inf, "mod",    modelo)
+    _sub(inf, "serie",  serie)
+    _sub(inf, "nNFIni", nnf_ini)
+    _sub(inf, "nNFFin", nnf_fin)
+    _sub(inf, "xJust",  justificativa)
+
+    signer = _XMLSignerSEFAZ(
+        method=methods.enveloped,
+        signature_algorithm="rsa-sha1",
+        digest_algorithm="sha1",
+        c14n_algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
+    )
+    inut_assinado = signer.sign(
+        inut, key=chave_privada, cert=[certificado], reference_uri=id_inut,
+    )
+    inut_str = etree.tostring(inut_assinado, encoding="unicode")
+
+    url  = (_url_servico_nfce(uf, "NFeInutilizacao4") if modelo == 65
+            else _url_servico(uf, "NFeInutilizacao4"))
+    resp = _enviar_soap(url, "NFeInutilizacao4", cuf, inut_str, cert_path, key_path)
+    body = _extrair_body(resp)
+    ns    = {"nfe": NS}
+    cstat = body.findtext(".//nfe:infInut/nfe:cStat",   namespaces=ns) \
+         or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:infInut/nfe:xMotivo", namespaces=ns) \
+         or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    print(f"[nfe] Inutilização: cStat={cstat} | {xmot}", flush=True)
     return {"cStat": cstat, "xMotivo": xmot}
 
 
@@ -693,9 +889,12 @@ def consultar_protocolo(chave: str, uf: str,
     resp = _enviar_soap(url, "NFeConsultaProtocolo4", cuf, xml, cert_path, key_path)
     body = _extrair_body(resp)
     ns   = {"nfe": NS}
-    cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
-    xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
-    nprot = body.findtext(".//nfe:nProt", namespaces=ns) or ""
+    cstat = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:cStat",   namespaces=ns) \
+         or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:xMotivo", namespaces=ns) \
+         or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    nprot = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:nProt",   namespaces=ns) \
+         or body.findtext(".//nfe:nProt", namespaces=ns) or ""
     return {"cStat": cstat, "xMotivo": xmot, "nProt": nprot}
 
 
@@ -731,32 +930,41 @@ def emitir_nfe(dados: dict) -> dict:
                 f"Serviço SEFAZ indisponível: cStat={status['cStat']} | {status['xMotivo']}"
             )
 
-        # 2. Montar e validar NF-e
+        # 2. Montar NF-e
         print("[nfe] Montando XML da NF-e...", flush=True)
         nfe_element, chave = montar_nfe_xml(dados)
 
-        print("[nfe] Validando XML contra schema XSD...", flush=True)
-        from validador_xml import validar_ou_abortar
-        validar_ou_abortar(nfe_element)
-
         print("[nfe] Assinando com XMLDSIG RSA-SHA1...", flush=True)
         nfe_assinada = assinar_nfe(nfe_element, chave_privada, certificado)
-        nfe_str      = etree.tostring(nfe_assinada, encoding="unicode")
+
+        # O schema da NFe exige a tag <Signature> — por isso a validação
+        # só pode acontecer depois de assinado, nunca antes.
+        print("[nfe] Validando XML contra schema XSD...", flush=True)
+        from validador_xml import validar_ou_abortar
+        validar_ou_abortar(nfe_assinada)
+
+        nfe_str = etree.tostring(nfe_assinada, encoding="unicode")
 
         # 3. Enviar para autorização
         print("[nfe] Enviando para SEFAZ (síncrono)...", flush=True)
         body = _autorizar(nfe_assinada, uf, cuf, cert_path, key_path)
 
+        # cStat aparece em dois níveis: o do lote (retEnviNFe, ex. 104=
+        # "Lote processado" — não é aprovação nem rejeição) e o da NF-e em si,
+        # dentro de protNFe/infProt. É esse segundo que importa.
         ns    = {"nfe": NS}
-        cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
-        xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
-        nprot = body.findtext(".//nfe:nProt",   namespaces=ns) or ""
+        cstat = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:cStat",   namespaces=ns) \
+             or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+        xmot  = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:xMotivo", namespaces=ns) \
+             or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+        nprot = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:nProt",   namespaces=ns) \
+             or body.findtext(".//nfe:nProt", namespaces=ns) or ""
         print(f"[nfe] Resposta: cStat={cstat} | {xmot}", flush=True)
 
         if cstat not in ("100", "150"):
             raise RuntimeError(f"NF-e não autorizada: [{cstat}] {xmot}")
 
-        print(f"[nfe] ✓ AUTORIZADA | chave={chave} | nProt={nprot}", flush=True)
+        print(f"[nfe] OK AUTORIZADA | chave={chave} | nProt={nprot}", flush=True)
 
         # 4. Montar procNFe e salvar
         prot_el  = body.find(f".//{{{NS}}}protNFe")
@@ -789,17 +997,27 @@ def emitir_nfe(dados: dict) -> dict:
 
 # ─── NFC-e (Modelo 65) ────────────────────────────────────────────
 
-def _calcular_hash_qrcode(chave: str, tp_amb: str, dh_emi: str,
-                           v_nf: str, v_icms: str,
-                           dig_val: str, id_csc: str, csc: str) -> str:
+def _montar_qrcode_nfce(url_base: str, chave: str, tp_amb: str,
+                         id_csc: str, csc: str) -> str:
     """
-    Hash SHA-256 do QR Code conforme NT 2016.002.
-    dig_val: DigestValue extraído do XML assinado.
-    csc:     Código de Segurança do Contribuinte (sem formatação).
-    id_csc:  Identificador do CSC (3 dígitos, ex: '001').
+    Monta o conteúdo do QR Code da NFC-e — formato "versão 2" (emissão
+    online, tpEmis=1), que é o que a implementação de referência do mercado
+    (nfephp-org/sped-nfe, usada por praticamente todo emissor real) gera:
+
+        <url>?p=<chave>|2|<tpAmb>|<idCSC>|<hash>
+
+    onde idCSC é numérico, SEM zero à esquerda, e:
+
+        hash = SHA-1("<chave>|2|<tpAmb>|<idCSC>" + CSC), hex MAIÚSCULO.
+
+    (O formato mais longo documentado no PDF da NT 2015.002 — com chNFe=,
+    nVersao=100, dhEmi=, vNF= etc — bate no schema mas na prática trava com
+    erro genérico no autorizador real da SEFAZ; não é esse o usado aqui.)
     """
-    texto = f"{chave}|{tp_amb}|{dh_emi}|{v_nf}|{v_icms}|{dig_val}|{id_csc}{csc}"
-    return hashlib.sha256(texto.encode("utf-8")).hexdigest().upper()
+    id_csc_num = str(int(id_csc))
+    seq = f"{chave}|2|{tp_amb}|{id_csc_num}"
+    hash_qr = hashlib.sha1((seq + csc).encode("utf-8")).hexdigest().upper()
+    return f"{url_base}?p={seq}|{hash_qr}"
 
 
 def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
@@ -826,7 +1044,7 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis)
     dh_emi = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%dT%H:%M:%S-03:00")
 
-    nfe = etree.Element(f"{{{NS}}}NFe", xmlns=NS)
+    nfe = etree.Element(f"{{{NS}}}NFe", nsmap={None: NS})
     inf = etree.SubElement(nfe, f"{{{NS}}}infNFe",
                            Id=f"NFe{chave}", versao="4.00")
 
@@ -836,8 +1054,8 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ide, "cNF",      chave[35:43])
     _sub(ide, "natOp",    dados.get("nat_op", "Venda a Consumidor"))
     _sub(ide, "mod",      mod)
-    _sub(ide, "serie",    f"{serie:03d}")
-    _sub(ide, "nNF",      f"{nnf:09d}")
+    _sub(ide, "serie",    str(serie))
+    _sub(ide, "nNF",      str(nnf))
     _sub(ide, "dhEmi",    dh_emi)
     _sub(ide, "tpNF",     dados.get("tp_nf", "1"))
     _sub(ide, "idDest",   dados.get("id_dest", "1"))
@@ -851,6 +1069,7 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ide, "indPres",  str(dados.get("ind_pres", "1")))
     _sub(ide, "procEmi",  "0")
     _sub(ide, "verProc",  dados.get("ver_proc", "1.0.0"))
+    _montar_nfref(ide, dados)
 
     # ── Emitente ─────────────────────────────────────────────────────
     emit = _sub(inf, "emit")
@@ -943,6 +1162,9 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
         cofinsnt = _sub(cofins, "COFINSNT")
         _sub(cofinsnt, "CST", "07")
 
+        # IBS/CBS — Reforma Tributária (ver comentário em _montar_ibscbs_item)
+        _montar_ibscbs_item(imposto, item, v_prod)
+
     # ── Totais ────────────────────────────────────────────────────────
     v_nf   = float(dados.get("v_nf", dados.get("vNF", v_prod_total)))
     v_desc = float(dados.get("v_desc", dados.get("vDesc", 0)))
@@ -967,6 +1189,7 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ictot, "vCOFINS",   "0.00")
     _sub(ictot, "vOutro",    "0.00")
     _sub(ictot, "vNF",       f"{v_nf:.2f}")
+    _montar_ibscbs_total(total, v_prod_total)
 
     # ── Transporte (mod 9 = sem frete, obrigatório no XML) ───────────
     transp = _sub(inf, "transp")
@@ -984,10 +1207,10 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
         _sub(inf_adic, "infCpl",
              dados.get("inf_adic", "NFC-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"))
 
-    # ── infNFeSupl — placeholder; QR Code inserido após assinatura ───
-    supl = _sub(inf, "infNFeSupl")
-    _sub(supl, "qrCode", "")      # preenchido após assinatura
-    _sub(supl, "urlChave", _url_consulta_nfce(uf))
+    # infNFeSupl (QR Code) NÃO entra aqui: pelo schema da NFe, ele é filho de
+    # <NFe> (irmão de infNFe e de Signature), inserido só depois de assinar
+    # — ver emitir_nfce(). Colocá-lo dentro de infNFe (como fazíamos antes)
+    # quebra a validação XSD e entraria indevidamente no digest da assinatura.
 
     return nfe, chave, dh_emi
 
@@ -1026,34 +1249,40 @@ def emitir_nfce(dados: dict) -> dict:
                 f"Serviço SEFAZ indisponível: cStat={status['cStat']} | {status['xMotivo']}"
             )
 
-        # 2. Montar e validar XML
+        # 2. Montar XML
         print("[nfce] Montando XML da NFC-e...", flush=True)
         nfe_element, chave, dh_emi = montar_nfce_xml(dados)
-
-        print("[nfce] Validando XML contra schema XSD...", flush=True)
-        from validador_xml import validar_ou_abortar
-        validar_ou_abortar(nfe_element)
 
         # 3. Assinar
         print("[nfce] Assinando com XMLDSIG RSA-SHA1...", flush=True)
         nfe_assinada = assinar_nfe(nfe_element, chave_privada, certificado)
 
-        # 4. Extrair DigestValue e montar QR Code
-        dig_val_el = nfe_assinada.find(".//{http://www.w3.org/2000/09/xmldsig#}DigestValue")
-        dig_val    = dig_val_el.text if dig_val_el is not None else ""
+        # 4. Montar QR Code — formato oficial da NT 2015.002 (chNFe=...&nVersao=100&...).
+        # Os valores (vNF, vICMS, dhEmi, digVal) são lidos de volta do próprio
+        url_consulta = _url_consulta_nfce(uf)   # campo urlChave
+        url_qrcode   = _url_qrcode_nfce(uf)      # conteúdo do QR Code
+        qr_content   = _montar_qrcode_nfce(url_qrcode, chave, tp_amb, id_csc, csc)
 
-        v_nf   = str(float(dados.get("v_nf", dados.get("vNF", 0))))
-        hash_qr = _calcular_hash_qrcode(
-            chave, tp_amb, dh_emi, v_nf, "0.00", dig_val, id_csc, csc
-        )
-        url_consulta = _url_consulta_nfce(uf)
-        qr_content   = f"{url_consulta}?p={chave}|{tp_amb}|{id_csc}|{hash_qr}"
+        # infNFeSupl é filho de <NFe>, mas pelo schema (leiauteNFe_v4.00.xsd)
+        # a ordem exigida é infNFe → infNFeSupl → Signature — ou seja, ele
+        # entra ANTES da assinatura, não depois. Insere com addprevious()
+        # em vez de anexar no final (que deixaria Signature antes dele).
+        # O _XMLSignerSEFAZ cria a tag <Signature> sem namespace explícito
+        # (QName(None, ...), pra sair sem prefixo no XML) — por isso ela é
+        # encontrada pelo nome puro, não pelo namespace do xmldsig.
+        sig_el = nfe_assinada.find("Signature")
+        supl = etree.Element(f"{{{NS}}}infNFeSupl")
+        # Formato "p=chave|2|tpAmb|idCSC|hash" não tem "&", então não precisa
+        # de CDATA (a referência nfephp também usa texto puro aqui).
+        _sub(supl, "qrCode", qr_content)
+        _sub(supl, "urlChave", url_consulta)
+        sig_el.addprevious(supl)
 
-        # Atualiza o qrCode no XML assinado
-        ns_nfe = {"nfe": NS}
-        qr_el  = nfe_assinada.find(".//nfe:qrCode", ns_nfe)
-        if qr_el is not None:
-            qr_el.text = qr_content
+        # Validação só agora, com a árvore completa e na ordem certa —
+        # o schema exige a tag <Signature>, então precisa ser depois de assinar.
+        print("[nfce] Validando XML contra schema XSD...", flush=True)
+        from validador_xml import validar_ou_abortar
+        validar_ou_abortar(nfe_assinada)
 
         nfe_str = etree.tostring(nfe_assinada, encoding="unicode")
 
@@ -1067,15 +1296,18 @@ def emitir_nfce(dados: dict) -> dict:
         body = _extrair_body(resp)
 
         ns    = {"nfe": NS}
-        cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
-        xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
-        nprot = body.findtext(".//nfe:nProt",   namespaces=ns) or ""
+        cstat = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:cStat",   namespaces=ns) \
+             or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+        xmot  = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:xMotivo", namespaces=ns) \
+             or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+        nprot = body.findtext(".//nfe:protNFe/nfe:infProt/nfe:nProt",   namespaces=ns) \
+             or body.findtext(".//nfe:nProt", namespaces=ns) or ""
         print(f"[nfce] Resposta: cStat={cstat} | {xmot}", flush=True)
 
         if cstat not in ("100", "150"):
             raise RuntimeError(f"NFC-e não autorizada: [{cstat}] {xmot}")
 
-        print(f"[nfce] ✓ AUTORIZADA | chave={chave} | nProt={nprot}", flush=True)
+        print(f"[nfce] OK AUTORIZADA | chave={chave} | nProt={nprot}", flush=True)
 
         # 6. Salvar procNFe
         prot_el    = body.find(f".//{{{NS}}}protNFe")

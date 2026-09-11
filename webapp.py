@@ -119,7 +119,7 @@ def admin_nova_nota():
     if not cliente:
         return jsonify({"erro": "Emitente não encontrado"}), 404
 
-    n_nfe = db.proximo_numero_nfe(cliente_id)
+    n_nfe = db.proximo_numero_nfe(cliente_id, modelo=55)
 
     nota_dados = {
         "cliente_id":   cliente_id,
@@ -151,6 +151,8 @@ def admin_nova_nota():
         "v_desc":       float(dados.get("v_desc", 0)),
         "v_frete":      float(dados.get("v_frete", 0)),
         "modelo":       55,
+        "fin_nfe":      dados.get("fin_nfe", "1"),
+        "ref_nfe":      _so_numeros(dados.get("ref_nfe", "")),
     }
 
     nota_id = db.criar_nota(nota_dados)
@@ -185,12 +187,12 @@ def admin_emitir_nota(nota_id):
                 resultado["n_prot"],
                 resultado["xml_path"],
             )
-            print(f"[emitir] ✓ nota={nota_id} chave={resultado['chave']}", flush=True)
+            print(f"[emitir] OK nota={nota_id} chave={resultado['chave']}", flush=True)
         except Exception as e:
             import traceback
             traceback.print_exc()
             db.update_nota_status(nota_id, "erro", str(e))
-            print(f"[emitir] ✗ nota={nota_id} ERRO: {e}", flush=True)
+            print(f"[emitir] ERRO nota={nota_id} ERRO: {e}", flush=True)
 
     threading.Thread(target=tarefa, daemon=True).start()
     return jsonify({"ok": True})
@@ -233,7 +235,7 @@ def admin_cancelar_nota(nota_id):
                 )
                 if resultado["cStat"] in ("101", "135"):
                     db.update_nota_cancelada(nota_id)
-                    print(f"[cancelar] ✓ nota={nota_id} cancelada", flush=True)
+                    print(f"[cancelar] OK nota={nota_id} cancelada", flush=True)
                 else:
                     db.update_nota_status(nota_id, "erro",
                         f"Cancelamento recusado [{resultado['cStat']}]: {resultado['xMotivo']}")
@@ -340,6 +342,8 @@ def admin_salvar_cliente():
         "serie":        int(request.form.get("serie", 1)),
         "caminho_certificado": existente.get("caminho_certificado", ""),
         "senha_certificado":   request.form.get("senha_certificado", "") or existente.get("senha_certificado", ""),
+        "id_csc":       request.form.get("id_csc", "") or existente.get("id_csc", "000001"),
+        "csc":          request.form.get("csc", "") or existente.get("csc", ""),
     }
     db.salvar_cliente(nome, dados)
     return jsonify({"ok": True})
@@ -429,7 +433,7 @@ def admin_nova_nfce():
     if not cliente:
         return jsonify({"erro": "Emitente não encontrado"}), 404
 
-    n_nfe = db.proximo_numero_nfe(cliente_id)
+    n_nfe = db.proximo_numero_nfe(cliente_id, modelo=65)
 
     nota_dados = {
         "cliente_id":   cliente_id,
@@ -536,6 +540,8 @@ def _montar_dados_emissao(nota: dict) -> dict:
         "ind_pres": nota.get("ind_pres", "1"),
         "mod_frete":nota.get("mod_frete", "9"),
         "tp_pag":   nota.get("tp_pag", "01"),
+        "fin_nfe":  nota.get("fin_nfe", "1"),
+        "ref_nfe":  nota.get("ref_nfe", ""),
 
         # Destinatário
         "cnpj_destinatario":    nota.get("cnpj_dest", ""),
@@ -590,7 +596,7 @@ def sped_fiscal():
         ano  = int(request.form.get("ano",  hoje.year))
         mes  = int(request.form.get("mes",  hoje.month))
 
-        cliente = next((c for c in db.listar_clientes() if c["id"] == cliente_id), None)
+        cliente = next((c for c in clientes if str(c["id"]) == str(cliente_id)), None)
         if not cliente:
             return render_template("admin/sped.html", clientes=clientes,
                                    erro="Emitente não encontrado.", hoje=hoje)
@@ -621,6 +627,66 @@ def sped_fiscal():
         )
 
     return render_template("admin/sped.html", clientes=clientes, hoje=hoje)
+
+
+# ── Inutilização de Numeração ──────────────────────────────────────────────
+
+@app.route("/admin/inutilizar", methods=["GET", "POST"])
+@_requer_login
+def inutilizar_numeracao():
+    clientes = db.listar_clientes()
+    hoje = datetime.now()
+
+    if request.method == "GET":
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje)
+
+    cliente_id = request.form.get("cliente_id", "")
+    modelo     = int(request.form.get("modelo", 55))
+    serie      = int(request.form.get("serie", 1))
+    ano        = int(request.form.get("ano", hoje.year))
+    nnf_ini    = int(request.form.get("nnf_ini", 0))
+    nnf_fin    = int(request.form.get("nnf_fin", nnf_ini))
+    justificativa = request.form.get("justificativa", "").strip()
+
+    cliente = next((c for c in clientes if str(c["id"]) == str(cliente_id)), None)
+    if not cliente:
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                               erro="Emitente não encontrado.")
+    if len(justificativa) < 15:
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                               erro="Justificativa deve ter ao menos 15 caracteres.")
+    if nnf_fin < nnf_ini:
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                               erro="Número final não pode ser menor que o inicial.")
+    if not cliente.get("caminho_certificado"):
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                               erro="Emitente sem certificado digital cadastrado.")
+
+    from fluxo_nfe_api import inutilizar_numeracao as _inutilizar, _pfx_para_pem
+    import shutil
+
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+        caminho_pfx, cliente.get("senha_certificado", "")
+    )
+    try:
+        resultado = _inutilizar(
+            uf=cliente["uf"], cnpj=cliente["cnpj"], ano=ano, modelo=modelo,
+            serie=serie, nnf_ini=nnf_ini, nnf_fin=nnf_fin,
+            justificativa=justificativa,
+            cert_path=cert_path, key_path=key_path,
+            chave_privada=chave_privada, certificado=certificado,
+        )
+    except Exception as e:
+        return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                               erro=f"Erro ao inutilizar: {e}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    sucesso = resultado.get("cStat") == "102"
+    return render_template("admin/inutilizar.html", clientes=clientes, hoje=hoje,
+                           resultado=resultado, sucesso=sucesso,
+                           form=request.form)
 
 
 if __name__ == "__main__":

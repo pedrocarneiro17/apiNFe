@@ -10,8 +10,26 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfgen import canvas
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.graphics.barcode import code128
 
 W, H = A4  # 210 x 297 mm
+
+
+def _extrair_ibscbs(xml_path: str) -> tuple[float, float]:
+    """Soma vIBS e vCBS de cada item, lendo do procNFe assinado/autorizado —
+    são os valores de teste do ano-teste 2026 da Reforma Tributária, não
+    entram no valor total da nota."""
+    if not xml_path:
+        return 0.0, 0.0
+    try:
+        import xml.etree.ElementTree as ET
+        ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
+        tree = ET.parse(xml_path)
+        v_ibs = sum(float(el.text) for el in tree.findall(".//nfe:vIBS", ns))
+        v_cbs = sum(float(el.text) for el in tree.findall(".//nfe:vCBS", ns))
+        return v_ibs, v_cbs
+    except Exception:
+        return 0.0, 0.0
 
 
 # ── helpers de estilo ─────────────────────────────────────────────
@@ -66,6 +84,19 @@ def _fmt_chave(chave):
     return " ".join(chave[i:i+4] for i in range(0, len(chave), 4))
 
 
+def _truncar(texto, fonte, tamanho, largura_max):
+    """Corta o texto (com '…' no final) até caber em largura_max pontos,
+    medindo a largura real da fonte — mais confiável que cortar por
+    quantidade fixa de caracteres, que ora sobra ora estoura a coluna."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    texto = str(texto or "")
+    if stringWidth(texto, fonte, tamanho) <= largura_max:
+        return texto
+    while texto and stringWidth(texto + "…", fonte, tamanho) > largura_max:
+        texto = texto[:-1]
+    return texto + "…" if texto else ""
+
+
 # ── canvas helpers ────────────────────────────────────────────────
 
 def _box(c, x, y, w, h, label="", value="", label_size=5, value_size=8):
@@ -109,7 +140,7 @@ def gerar_danfe(nota: dict) -> bytes:
     y = topo  # cursor vertical (decresce)
 
     # ── Cabecalho ────────────────────────────────────────────────
-    cab_h = 28 * mm
+    cab_h = 32 * mm
 
     # Borda externa do cabecalho
     c.setLineWidth(0.5)
@@ -127,52 +158,57 @@ def gerar_danfe(nota: dict) -> bytes:
     _vline(c, x2, y - cab_h, cab_h)
     _vline(c, x3, y - cab_h, cab_h)
 
-    # Emitente (esquerda)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(x1 + 2*mm, y - 6*mm,  str(nota.get("razao_social", "")).upper())
-    c.setFont("Helvetica", 7)
+    # Emitente (esquerda) — MOC 7.0 Anexo II, item 3.7.6: razão social em
+    # negrito mín. 12pt; demais dados do emitente em negrito mín. 8pt.
+    largura_col1 = col1 - 4*mm  # 2mm de respiro em cada lado
+    c.setFont("Helvetica-Bold", 12)
+    nome_emit = _truncar(str(nota.get("razao_social", "")).upper(), "Helvetica-Bold", 12, largura_col1)
+    c.drawString(x1 + 2*mm, y - 6*mm, nome_emit)
+    c.setFont("Helvetica-Bold", 8)
     end_emit = (
         f"{nota.get('xLgr','')}, {nota.get('nro','')} "
         f"{nota.get('xBairro','')} - {nota.get('xMun','')}/{nota.get('uf','')}"
     )
-    c.drawString(x1 + 2*mm, y - 10*mm, end_emit)
-    c.drawString(x1 + 2*mm, y - 13*mm, f"CNPJ: {_fmt_cnpj(nota.get('cnpj_emit',''))}")
-    c.drawString(x1 + 2*mm, y - 16*mm, f"IE: {nota.get('ie','')}")
-    c.drawString(x1 + 2*mm, y - 19*mm, f"Fone: {nota.get('fone','')}")
+    end_emit = _truncar(end_emit, "Helvetica-Bold", 8, largura_col1)
+    c.drawString(x1 + 2*mm, y - 11*mm, end_emit)
+    c.drawString(x1 + 2*mm, y - 15*mm, f"CNPJ: {_fmt_cnpj(nota.get('cnpj_emit',''))}")
+    c.drawString(x1 + 2*mm, y - 19*mm, f"IE: {nota.get('ie','')}")
+    c.drawString(x1 + 2*mm, y - 23*mm, f"Fone: {nota.get('fone','')}")
 
-    # Centro — DANFE
+    # Centro — DANFE — MOC 7.0 Anexo II, item 3.7.4: "DANFE" em negrito
+    # mín. 12pt; "Documento Auxiliar..." e tipo de operação em mín. 8pt.
     xc = x2
     wc = col2
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(xc + wc/2, y - 6*mm, "DANFE")
-    c.setFont("Helvetica", 6)
-    c.drawCentredString(xc + wc/2, y - 9.5*mm, "Documento Auxiliar da")
-    c.drawCentredString(xc + wc/2, y - 12*mm,  "Nota Fiscal Eletrônica")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(xc + wc/2, y - 7*mm, "DANFE")
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(xc + wc/2, y - 11*mm, "Documento Auxiliar da")
+    c.drawCentredString(xc + wc/2, y - 14.5*mm,  "Nota Fiscal Eletrônica")
 
     tp_nf = "ENTRADA" if str(nota.get("tp_nf", "1")) == "0" else "SAÍDA"
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(xc + wc/2, y - 16*mm, f"Tipo: {tp_nf}")
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(xc + wc/2, y - 19*mm, f"Tipo: {tp_nf}")
 
     ambiente = nota.get("ambiente", "2")
     if str(ambiente) == "2":
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(xc + wc/2, y - 20*mm, "SEM VALOR FISCAL")
+        c.drawCentredString(xc + wc/2, y - 24*mm, "SEM VALOR FISCAL")
         c.setFillColor(colors.black)
 
-    # Direita — numero e serie
+    # Direita — número e série — mín. 10pt negrito (3.7.4)
     xd = x3
     wd = col3
     n_nfe = str(nota.get("n_nfe", 0)).zfill(9)
     serie = str(nota.get("serie", 1)).zfill(3)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(xd + wd/2, y - 6*mm,  f"NF-e  Nº {n_nfe}")
-    c.drawCentredString(xd + wd/2, y - 10*mm, f"Série  {serie}")
-    c.setFont("Helvetica", 7)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(xd + wd/2, y - 7*mm,  f"NF-e  Nº {n_nfe}")
+    c.drawCentredString(xd + wd/2, y - 12*mm, f"Série  {serie}")
+    c.setFont("Helvetica", 8)
     import datetime
-    c.drawCentredString(xd + wd/2, y - 14*mm, f"Emissão: {datetime.datetime.now().strftime('%d/%m/%Y')}")
-    c.setFont("Helvetica", 6)
-    c.drawCentredString(xd + wd/2, y - 18*mm, f"Folha 1/1")
+    c.drawCentredString(xd + wd/2, y - 17*mm, f"Emissão: {datetime.datetime.now().strftime('%d/%m/%Y')}")
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(xd + wd/2, y - 22*mm, f"Folha 1/1")
 
     y -= cab_h
 
@@ -180,24 +216,39 @@ def gerar_danfe(nota: dict) -> bytes:
     chave_h = 10 * mm
     c.setLineWidth(0.3)
     c.rect(margem, y - chave_h, larg, chave_h)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem + 1*mm, y - 3*mm, "CHAVE DE ACESSO")
     c.setFont("Helvetica-Bold", 8)
     c.drawCentredString(margem + larg/2, y - 7*mm, _fmt_chave(nota.get("chave", "")))
 
     y -= chave_h
 
+    # ── Código de barras CODE-128C da chave de acesso ─────────────
+    # MOC 7.0 Anexo II, item 2: CODE-128C, largura mínima 6cm (laser),
+    # altura mínima 0,8cm.
+    chave_num = "".join(c2 for c2 in str(nota.get("chave", "")) if c2.isdigit())
+    if chave_num:
+        barcode_h = 12 * mm
+        c.setLineWidth(0.3)
+        c.rect(margem, y - barcode_h, larg, barcode_h)
+        try:
+            bc = code128.Code128(chave_num, barWidth=0.5, barHeight=8*mm)
+            bc.drawOn(c, margem + (larg - bc.width) / 2, y - barcode_h + 2*mm)
+        except Exception:
+            pass
+        y -= barcode_h
+
     # ── Natureza da operacao / protocolo ────────────────────────
     nat_h = 9 * mm
     c.rect(margem, y - nat_h, larg * 0.60, nat_h)
     c.rect(margem + larg * 0.60, y - nat_h, larg * 0.40, nat_h)
 
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem + 1*mm, y - 3*mm, "NATUREZA DA OPERAÇÃO")
     c.setFont("Helvetica-Bold", 8)
     c.drawString(margem + 1*mm, y - 7*mm, str(nota.get("nat_op", "")))
 
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem + larg*0.60 + 1*mm, y - 3*mm, "PROTOCOLO DE AUTORIZAÇÃO")
     c.setFont("Helvetica-Bold", 8)
     n_prot = str(nota.get("n_prot", ""))
@@ -215,7 +266,7 @@ def gerar_danfe(nota: dict) -> bytes:
         ("Regime Tributário", {1:"Simples Nacional",2:"Simples Nacional Exc.",3:"Regime Normal"}.get(int(nota.get("crt",1)),""))
     ]):
         c.rect(margem + i*tercos, y - emit_h, tercos, emit_h)
-        c.setFont("Helvetica", 5)
+        c.setFont("Helvetica-Bold", 6)
         c.drawString(margem + i*tercos + 1*mm, y - 3*mm, label.upper())
         c.setFont("Helvetica-Bold", 7)
         c.drawString(margem + i*tercos + 1*mm, y - 7*mm, str(val))
@@ -234,12 +285,13 @@ def gerar_danfe(nota: dict) -> bytes:
     c.rect(margem, y - dest_h, larg*0.50, dest_h)
     c.rect(margem + larg*0.50, y - dest_h, larg*0.30, dest_h)
     c.rect(margem + larg*0.80, y - dest_h, larg*0.20, dest_h)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem+1*mm, y-3*mm, "NOME / RAZÃO SOCIAL")
     c.drawString(margem+larg*0.50+1*mm, y-3*mm, "CNPJ / CPF")
     c.drawString(margem+larg*0.80+1*mm, y-3*mm, "IE DESTINATÁRIO")
     c.setFont("Helvetica-Bold", 7)
-    c.drawString(margem+1*mm, y-7*mm, str(nota.get("xNome_dest","")))
+    nome_dest = _truncar(nota.get("xNome_dest",""), "Helvetica-Bold", 7, larg*0.50 - 3*mm)
+    c.drawString(margem+1*mm, y-7*mm, nome_dest)
     c.drawString(margem+larg*0.50+1*mm, y-7*mm, dest_doc)
     c.drawString(margem+larg*0.80+1*mm, y-7*mm, str(nota.get("ie_dest","")))
     y -= dest_h
@@ -249,14 +301,15 @@ def gerar_danfe(nota: dict) -> bytes:
     c.rect(margem+larg*0.40, y-dest_h, larg*0.25, dest_h)
     c.rect(margem+larg*0.65, y-dest_h, larg*0.08, dest_h)
     c.rect(margem+larg*0.73, y-dest_h, larg*0.27, dest_h)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem+1*mm, y-3*mm, "ENDEREÇO")
     c.drawString(margem+larg*0.40+1*mm, y-3*mm, "MUNICÍPIO")
     c.drawString(margem+larg*0.65+1*mm, y-3*mm, "UF")
     c.drawString(margem+larg*0.73+1*mm, y-3*mm, "CEP")
     c.setFont("Helvetica-Bold", 7)
     end_dest = f"{nota.get('xLgr_dest','')}, {nota.get('nro_dest','')} {nota.get('xBairro_dest','')}"
-    c.drawString(margem+1*mm, y-7*mm, end_dest[:45])
+    end_dest = _truncar(end_dest, "Helvetica-Bold", 7, larg*0.40 - 3*mm)
+    c.drawString(margem+1*mm, y-7*mm, end_dest)
     c.drawString(margem+larg*0.40+1*mm, y-7*mm, str(nota.get("xMun_dest","")))
     c.drawString(margem+larg*0.65+1*mm, y-7*mm, str(nota.get("uf_dest","")))
     c.drawString(margem+larg*0.73+1*mm, y-7*mm, _fmt_cep(nota.get("cep_dest","")))
@@ -272,8 +325,13 @@ def gerar_danfe(nota: dict) -> bytes:
         itens = json.loads(itens)
 
     # cabecalho da tabela de itens
-    col_w = [larg*p for p in [0.07, 0.30, 0.07, 0.06, 0.08, 0.08, 0.06, 0.06, 0.08, 0.08, 0.06]]
-    headers = ["CÓD.", "DESCRIÇÃO", "NCM", "CST/\nCSOSN", "QTD", "UNID", "VL UNIT", "V.DESC", "VL TOTAL", "CFOP", "% IPI"]
+    # MOC 7.0 Anexo II, item 3.1.7: colunas que não podem ser suprimidas —
+    # Código, Descrição, NCM, CST, CFOP, Unidade, Quantidade, Valor Unitário,
+    # Valor Total, Base de Cálculo do ICMS, Valor do ICMS e Alíquota do ICMS.
+    col_w = [larg*p for p in [0.06, 0.28, 0.06, 0.05, 0.05, 0.05, 0.06, 0.08, 0.08, 0.09, 0.09, 0.05]]
+    headers = ["CÓD.", "DESCRIÇÃO", "NCM", "CST/\nCSOSN", "CFOP", "UNID", "QTD",
+               "VL UNIT", "VL TOTAL", "B.CÁLC.\nICMS", "VL\nICMS", "ALIQ\nICMS"]
+    crt = int(nota.get("crt", 1))
 
     row_h = 5 * mm
     # cabecalho
@@ -281,7 +339,7 @@ def gerar_danfe(nota: dict) -> bytes:
     for i, (h, w) in enumerate(zip(headers, col_w)):
         c.setLineWidth(0.3)
         c.rect(x_cur, y - row_h, w, row_h)
-        c.setFont("Helvetica-Bold", 4.5)
+        c.setFont("Helvetica-Bold", 5)
         c.drawCentredString(x_cur + w/2, y - row_h + 1.2*mm, h.replace("\n", " "))
         x_cur += w
     y -= row_h
@@ -289,23 +347,37 @@ def gerar_danfe(nota: dict) -> bytes:
     # linhas de itens
     for item in itens[:20]:  # maximo 20 itens por pagina
         x_cur = margem
+        qtd    = float(item.get("qCom", item.get("qtd", 1)) or 0)
+        v_un   = float(item.get("vUnCom", item.get("preco", 0)) or 0)
+        v_prod = float(item["vProd"]) if item.get("vProd") else qtd * v_un
+
+        # Simples Nacional (CSOSN) não destaca ICMS próprio no DANFE — os
+        # campos ficam zerados. Regime Normal (CST) calcula pela alíquota.
+        if crt == 1 or str(item.get("CST_ICMS", "")) not in ("00",):
+            v_bc_icms, v_icms, aliq_icms = 0.0, 0.0, 0.0
+        else:
+            v_bc_icms = v_prod
+            aliq_icms = float(item.get("pICMS", 0) or 0)
+            v_icms    = v_bc_icms * aliq_icms / 100
+
         vals = [
             item.get("cProd", ""),
             item.get("xProd", ""),
             item.get("NCM", item.get("ncm", "")),
             item.get("CSOSN", item.get("csosn", item.get("CST", ""))),
-            str(item.get("qCom", item.get("qtd", ""))),
-            item.get("uCom", item.get("unidade", "UN")),
-            f"{float(item.get('vUnCom', item.get('preco', 0))):,.2f}",
-            f"{float(item.get('vDesc', 0)):,.2f}",
-            f"{float(item.get('vProd', item.get('vUnCom', 0)) * float(item.get('qCom', item.get('qtd', 1))) if not item.get('vProd') else item.get('vProd')):,.2f}",
             item.get("CFOP", item.get("cfop", "")),
-            "",
+            item.get("uCom", item.get("unidade", "UN")),
+            f"{qtd:,.2f}",
+            f"{v_un:,.2f}",
+            f"{v_prod:,.2f}",
+            f"{v_bc_icms:,.2f}",
+            f"{v_icms:,.2f}",
+            f"{aliq_icms:,.2f}",
         ]
         for i, (v, w) in enumerate(zip(vals, col_w)):
             c.rect(x_cur, y - row_h, w, row_h)
-            c.setFont("Helvetica", 5)
-            align_right = i in [4, 6, 7, 8]
+            c.setFont("Helvetica", 6)
+            align_right = i in (6, 7, 8, 9, 10, 11)
             if align_right:
                 c.drawRightString(x_cur + w - 1*mm, y - row_h + 1.5*mm, str(v))
             else:
@@ -321,28 +393,36 @@ def gerar_danfe(nota: dict) -> bytes:
     _secao(c, margem, y, larg, "CÁLCULO DO IMPOSTO")
     y -= 5*mm
 
+    v_ibs, v_cbs = _extrair_ibscbs(nota.get("arquivo_xml", ""))
+
     tot_h = 9*mm
     tots = [
-        ("BASE CÁLC. ICMS", "R$ 0,00"),
-        ("VALOR ICMS", "R$ 0,00"),
-        ("BASE CÁLC. ICMS ST", "R$ 0,00"),
+        ("BC ICMS", "R$ 0,00"),
+        ("VL ICMS", "R$ 0,00"),
+        ("BC ICMS ST", "R$ 0,00"),
         ("VL ICMS ST", "R$ 0,00"),
         ("VL IPI", "R$ 0,00"),
-        ("VL TOTAL PRODUTOS", _fmt_money(nota.get("v_nf", 0))),
+        ("VL PRODUTOS", _fmt_money(nota.get("v_nf", 0))),
         ("VL FRETE", _fmt_money(nota.get("v_frete", 0))),
-        ("VL DESCONTO", _fmt_money(nota.get("v_desc", 0))),
-        ("VL TOTAL NF-e", _fmt_money(nota.get("v_nf", 0))),
+        ("VL DESC.", _fmt_money(nota.get("v_desc", 0))),
+        ("VL IBS*", _fmt_money(v_ibs)),
+        ("VL CBS*", _fmt_money(v_cbs)),
+        ("VL NF-e", _fmt_money(nota.get("v_nf", 0))),
     ]
     w_each = larg / len(tots)
     x_cur = margem
     for label, val in tots:
         c.rect(x_cur, y - tot_h, w_each, tot_h)
-        c.setFont("Helvetica", 4.5)
+        c.setFont("Helvetica-Bold", 6)
         c.drawString(x_cur + 0.5*mm, y - 3*mm, label)
         c.setFont("Helvetica-Bold", 7)
         c.drawRightString(x_cur + w_each - 0.5*mm, y - 7*mm, val)
         x_cur += w_each
     y -= tot_h
+    if v_ibs or v_cbs:
+        c.setFont("Helvetica", 6)
+        c.drawString(margem, y - 3*mm, "* IBS/CBS: valores de teste (ano-teste 2026), não somam no valor total da nota")
+        y -= 4*mm
 
     # ── Transportadora ───────────────────────────────────────────
     _secao(c, margem, y, larg, "TRANSPORTADOR / VOLUMES TRANSPORTADOS")
@@ -355,7 +435,7 @@ def gerar_danfe(nota: dict) -> bytes:
         "9": "9 - Sem frete",
     }.get(str(nota.get("mod_frete", "9")), "9 - Sem frete")
     c.rect(margem, y - transp_h, larg, transp_h)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem+1*mm, y-3*mm, "MODALIDADE DO FRETE")
     c.setFont("Helvetica-Bold", 7)
     c.drawString(margem+1*mm, y-7*mm, mod_frete)
@@ -369,7 +449,7 @@ def gerar_danfe(nota: dict) -> bytes:
         adic_h = 15*mm
     c.rect(margem, y - adic_h, larg*0.70, adic_h)
     c.rect(margem+larg*0.70, y - adic_h, larg*0.30, adic_h)
-    c.setFont("Helvetica", 5)
+    c.setFont("Helvetica-Bold", 6)
     c.drawString(margem+1*mm, y-3*mm, "INFORMAÇÕES COMPLEMENTARES")
     c.drawString(margem+larg*0.70+1*mm, y-3*mm, "RESERVADO AO FISCO")
     inf = str(nota.get("inf_adic", ""))

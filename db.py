@@ -143,6 +143,9 @@ def init_db():
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS v_desc NUMERIC(14,2) DEFAULT 0",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS v_frete NUMERIC(14,2) DEFAULT 0",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS modelo INTEGER DEFAULT 55",
+        "ALTER TABLE clientes ADD COLUMN IF NOT EXISTS numero_nfce INTEGER DEFAULT 1",
+        "ALTER TABLE notas ADD COLUMN IF NOT EXISTS fin_nfe TEXT DEFAULT '1'",
+        "ALTER TABLE notas ADD COLUMN IF NOT EXISTS ref_nfe TEXT DEFAULT ''",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -176,8 +179,8 @@ def salvar_cliente(nome: str, dados: dict):
                 INSERT INTO clientes
                     (id, razao_social, cnpj, ie, crt, uf, cuf, cep,
                      xLgr, nro, xCpl, xBairro, cMun, xMun, fone, xFant,
-                     caminho_certificado, senha_certificado, serie)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     caminho_certificado, senha_certificado, serie, id_csc, csc)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (id) DO UPDATE SET
                     razao_social        = EXCLUDED.razao_social,
                     cnpj                = EXCLUDED.cnpj,
@@ -200,7 +203,13 @@ def salvar_cliente(nome: str, dados: dict):
                     senha_certificado   = CASE WHEN COALESCE(EXCLUDED.senha_certificado,'')=''
                                               THEN clientes.senha_certificado
                                               ELSE EXCLUDED.senha_certificado END,
-                    serie               = EXCLUDED.serie
+                    serie               = EXCLUDED.serie,
+                    id_csc              = CASE WHEN COALESCE(EXCLUDED.id_csc,'')=''
+                                              THEN clientes.id_csc
+                                              ELSE EXCLUDED.id_csc END,
+                    csc                 = CASE WHEN COALESCE(EXCLUDED.csc,'')=''
+                                              THEN clientes.csc
+                                              ELSE EXCLUDED.csc END
             """, (
                 nome,
                 dados.get("razao_social", ""),
@@ -221,6 +230,8 @@ def salvar_cliente(nome: str, dados: dict):
                 dados.get("caminho_certificado", ""),
                 dados.get("senha_certificado", ""),
                 int(dados.get("serie", 1)),
+                dados.get("id_csc", "000001"),
+                dados.get("csc", ""),
             ))
 
 
@@ -230,13 +241,18 @@ def deletar_cliente(nome: str):
             cur.execute("DELETE FROM clientes WHERE id = %s", (nome,))
 
 
-def proximo_numero_nfe(cliente_id: str) -> int:
-    """Incrementa e retorna o proximo nNF (atomico)."""
+def proximo_numero_nfe(cliente_id: str, modelo: int = 55) -> int:
+    """Incrementa e retorna o proximo nNF (atomico).
+
+    NF-e (55) e NFC-e (65) sao series numericas INDEPENDENTES na SEFAZ —
+    por isso cada modelo tem sua propria coluna de contador.
+    """
+    coluna = "numero_nfe" if modelo == 55 else "numero_nfce"
     with _get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clientes SET numero_nfe = numero_nfe + 1
-                WHERE id = %s RETURNING numero_nfe - 1
+            cur.execute(f"""
+                UPDATE clientes SET {coluna} = {coluna} + 1
+                WHERE id = %s RETURNING {coluna} - 1
             """, (cliente_id,))
             row = cur.fetchone()
     return row[0] if row else 1
@@ -300,11 +316,12 @@ def criar_nota(dados: dict) -> int:
                     cnpj_dest, cpf_dest, xNome_dest, ie_dest,
                     xLgr_dest, nro_dest, xCpl_dest, xBairro_dest,
                     cMun_dest, xMun_dest, uf_dest, cep_dest, email_dest,
-                    itens, inf_adic, v_nf, v_desc, v_frete, modelo, status
+                    itens, inf_adic, v_nf, v_desc, v_frete, modelo,
+                    fin_nfe, ref_nfe, status
                 ) VALUES (
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,'pendente'
+                    %s,%s,%s,%s,%s,%s,%s,%s,'pendente'
                 ) RETURNING id
             """, (
                 dados.get("cliente_id"),
@@ -336,6 +353,8 @@ def criar_nota(dados: dict) -> int:
                 float(dados.get("v_desc", 0)),
                 float(dados.get("v_frete", 0)),
                 int(dados.get("modelo", 55)),
+                dados.get("fin_nfe", "1"),
+                dados.get("ref_nfe", ""),
             ))
             return cur.fetchone()[0]
 
@@ -373,7 +392,7 @@ def get_nota(nota_id: int):
                        c.uf, c.ie, c.crt, c.xLgr, c.nro, c.xCpl,
                        c.xBairro, c.cMun, c.xMun, c.cep, c.fone,
                        c.caminho_certificado, c.senha_certificado,
-                       c.serie as serie_emit, c.xFant
+                       c.serie as serie_emit, c.xFant, c.id_csc, c.csc
                 FROM notas n
                 LEFT JOIN clientes c ON c.id = n.cliente_id
                 WHERE n.id = %s

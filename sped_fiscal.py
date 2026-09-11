@@ -397,8 +397,8 @@ def gerar_efd(cliente: dict, notas: list[dict], ano: int, mes: int) -> bytes:
 
     # 9990 e 9999 fecham o bloco e o arquivo
     qtd_9900 = cnt.qtd_bloco("9") + 1   # inclui o 9990 que vamos escrever
-    w("9990", str(qtd_9900 + 1))
-    total_final = cnt.total + 2          # +9999 e ele mesmo
+    w("9990", str(qtd_9900))
+    total_final = cnt.total + 1          # +9999 (a 9990 já foi contada acima)
     w("9999", str(total_final))
 
     return "".join(linhas).encode("utf-8")
