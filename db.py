@@ -218,6 +218,7 @@ def listar_clientes():
             cur.execute("SELECT * FROM clientes ORDER BY id")
             rows = _rows(cur)
             for r in rows:
+                r.pop("certificado_pfx", None)
                 _normalizar_case_misto(r)
             return rows
 
@@ -226,7 +227,10 @@ def carregar_cliente(nome: str):
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute("SELECT * FROM clientes WHERE id = %s", (nome,))
-            return _normalizar_case_misto(_row(cur))
+            row = _row(cur)
+            if row:
+                row.pop("certificado_pfx", None)
+            return _normalizar_case_misto(row)
 
 
 def salvar_cliente(nome: str, dados: dict):
