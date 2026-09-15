@@ -83,23 +83,6 @@ def _normalizar_case_misto(row):
     return row
 
 
-def _garantir_xml_disco(row):
-    """Re-materializa o procNFe em disco a partir do Postgres se o arquivo
-    sumiu (disco efêmero do Railway some a cada redeploy) — sem isso,
-    download de XML e geração de PDF (que leem tpAmb/dhRecbto/QR do
-    arquivo) quebravam depois do primeiro deploy seguinte à emissão."""
-    if not row:
-        return row
-    caminho = row.get("arquivo_xml")
-    conteudo = row.get("xml_conteudo")
-    if caminho and conteudo and not os.path.isfile(caminho):
-        try:
-            os.makedirs(os.path.dirname(caminho), exist_ok=True)
-            with open(caminho, "w", encoding="utf-8") as f:
-                f.write(conteudo)
-        except Exception:
-            pass
-    return row
 
 
 # ── Init ──────────────────────────────────────────────────────────
@@ -525,8 +508,7 @@ def get_nota(nota_id: int):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            r = _normalizar_case_misto(r)
-            return _garantir_xml_disco(r)
+            return _normalizar_case_misto(r)
 
 
 def update_nota_status(nota_id: int, status: str, obs: str = None):
@@ -592,8 +574,7 @@ def get_nota_por_chave(chave: str):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            r = _normalizar_case_misto(r)
-            return _garantir_xml_disco(r)
+            return _normalizar_case_misto(r)
 
 
 # ── Idempotência da API (evita duplicar número em retentativas) ────

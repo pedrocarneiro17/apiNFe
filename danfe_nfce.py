@@ -39,18 +39,39 @@ def _chave_fmt(c):
     return " ".join(c[i:i+4] for i in range(0, len(c), 4))
 
 
-def _extrair_dhrecbto(xml_path: str) -> str:
+def _obter_xml_texto(nota: dict) -> str:
+    """Texto do procNFe autorizado — sempre prioriza o Postgres (fonte
+    durável); só cai pro arquivo em disco se por algum motivo o banco não
+    tiver o conteúdo (nota emitida antes dessa coluna existir). Disco no
+    Railway é efêmero (some a cada redeploy), então nunca deve ser a
+    única fonte pra nada que precisa sobreviver além da própria request."""
+    conteudo = nota.get("xml_conteudo")
+    if conteudo:
+        return conteudo
+    caminho = nota.get("arquivo_xml", "")
+    if caminho:
+        try:
+            import os
+            if os.path.isfile(caminho):
+                with open(caminho, "r", encoding="utf-8") as f:
+                    return f.read()
+        except Exception:
+            pass
+    return ""
+
+
+def _extrair_dhrecbto(xml_texto: str) -> str:
     """Lê a data/hora real de autorização (protNFe/infProt/dhRecbto) do
     procNFe — já vem em horário local (-03:00) na resposta da SEFAZ, não
     precisa converter. Antes o cupom imprimia a hora de GERAÇÃO DO PDF
     (datetime.now()), o que é incorreto — o manual exige a data/hora real
     de autorização."""
-    if not xml_path:
+    if not xml_texto:
         return ""
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         dh = tree.findtext(".//nfe:infProt/nfe:dhRecbto", namespaces=ns) or ""
         if not dh:
             return ""
@@ -62,17 +83,17 @@ def _extrair_dhrecbto(xml_path: str) -> str:
         return ""
 
 
-def _extrair_tpamb(xml_path: str) -> str:
+def _extrair_tpamb(xml_texto: str) -> str:
     """Lê o ambiente real da autorização (protNFe/infProt/tpAmb) do procNFe
     — fonte confiável de verdade, ao contrário de um campo "ambiente" que
     nunca existiu na tabela notas (por isso o cupom sempre exibia o selo
     de homologação, mesmo em notas emitidas de verdade em produção)."""
-    if not xml_path:
+    if not xml_texto:
         return "2"
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         tp = (tree.findtext(".//nfe:protNFe/nfe:infProt/nfe:tpAmb", namespaces=ns)
               or tree.findtext(".//nfe:infNFe/nfe:ide/nfe:tpAmb", namespaces=ns) or "2")
         return tp
@@ -80,29 +101,29 @@ def _extrair_tpamb(xml_path: str) -> str:
         return "2"
 
 
-def _extrair_urlchave(xml_path: str) -> str:
+def _extrair_urlchave(xml_texto: str) -> str:
     """Lê a URL de consulta por chave (infNFeSupl/urlChave) do procNFe."""
-    if not xml_path:
+    if not xml_texto:
         return ""
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         return tree.findtext(".//nfe:urlChave", namespaces=ns) or ""
     except Exception:
         return ""
 
 
-def _extrair_ibscbs(xml_path: str) -> tuple[float, float]:
+def _extrair_ibscbs(xml_texto: str) -> tuple[float, float]:
     """Soma vIBS e vCBS de cada item, lendo do procNFe assinado/autorizado —
     são os valores de teste do ano-teste 2026 da Reforma Tributária, não
     entram no valor total da nota."""
-    if not xml_path:
+    if not xml_texto:
         return 0.0, 0.0
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         v_ibs = sum(float(el.text) for el in tree.findall(".//nfe:vIBS", ns))
         v_cbs = sum(float(el.text) for el in tree.findall(".//nfe:vCBS", ns))
         return v_ibs, v_cbs
@@ -122,6 +143,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
     """Desenha (ou só mede, se `c` for um _NullCanvas) o cupom inteiro a
     partir de y_start. Retorna o y final (mais baixo ponto alcançado)."""
     y = y_start
+    xml_texto = _obter_xml_texto(nota)
 
     def linha(texto, size=7, bold=False, center=False, right=False, color=colors.black):
         nonlocal y
@@ -163,7 +185,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
 
     # Divisão VIII — em homologação o texto abaixo do cabeçalho é exigido
     # literalmente (não é livre, tem que ser exatamente este):
-    if _extrair_tpamb(nota.get("arquivo_xml", "")) == "2":
+    if _extrair_tpamb(xml_texto) == "2":
         linha("EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO", size=6.5, bold=True, center=True, color=colors.red)
         linha("SEM VALOR FISCAL", size=6.5, bold=True, center=True, color=colors.red)
     divisor()
@@ -218,7 +240,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
     linha_total("Valor a Pagar R$:" if v_desc > 0 else "TOTAL:", _money(v_nf), bold=True)
 
     # IBS/CBS (ano-teste 2026) — só informativo, não soma no TOTAL acima
-    v_ibs, v_cbs = _extrair_ibscbs(nota.get("arquivo_xml", ""))
+    v_ibs, v_cbs = _extrair_ibscbs(xml_texto)
     if v_ibs or v_cbs:
         linha_total("Val. aprox. IBS (teste):", _money(v_ibs))
         linha_total("Val. aprox. CBS (teste):", _money(v_cbs))
@@ -255,7 +277,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
     # Chave deve sair em 11 blocos de 4 dígitos (item 3.1.4) — o código
     # antigo quebrava errado, em blocos de 11 dígitos.
     chave = str(nota.get("chave",""))
-    url_chave = _extrair_urlchave(nota.get("arquivo_xml", ""))
+    url_chave = _extrair_urlchave(xml_texto)
     linha("CONSULTE PELA CHAVE DE ACESSO EM:", size=5.5, bold=True, center=True)
     if url_chave:
         linha(url_chave, size=5.5, center=True)
@@ -266,7 +288,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
     n_prot = nota.get("n_prot","")
     if n_prot:
         y -= 1*mm
-        dh_recbto = _extrair_dhrecbto(nota.get("arquivo_xml", ""))
+        dh_recbto = _extrair_dhrecbto(xml_texto)
         linha(f"Protocolo de autorização: {n_prot}", size=6, center=True)
         if dh_recbto:
             linha(dh_recbto, size=6, center=True)
@@ -275,11 +297,10 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
     # ── QR Code ───────────────────────────────────────────────────
     qr_url = ""
     # tenta extrair do XML salvo ou usa placeholder
-    xml_path = nota.get("arquivo_xml","")
-    if xml_path:
+    if xml_texto:
         try:
             import xml.etree.ElementTree as ET
-            tree = ET.parse(xml_path)
+            tree = ET.fromstring(xml_texto.encode("utf-8"))
             ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
             el = tree.find(".//nfe:qrCode", ns)
             if el is not None and el.text:

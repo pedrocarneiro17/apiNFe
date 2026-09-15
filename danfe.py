@@ -15,16 +15,37 @@ from reportlab.graphics.barcode import code128
 W, H = A4  # 210 x 297 mm
 
 
-def _extrair_ibscbs(xml_path: str) -> tuple[float, float]:
+def _obter_xml_texto(nota: dict) -> str:
+    """Texto do procNFe autorizado — sempre prioriza o Postgres (fonte
+    durável); só cai pro arquivo em disco se por algum motivo o banco não
+    tiver o conteúdo (nota emitida antes dessa coluna existir). Disco no
+    Railway é efêmero (some a cada redeploy), então nunca deve ser a
+    única fonte pra nada que precisa sobreviver além da própria request."""
+    conteudo = nota.get("xml_conteudo")
+    if conteudo:
+        return conteudo
+    caminho = nota.get("arquivo_xml", "")
+    if caminho:
+        try:
+            import os
+            if os.path.isfile(caminho):
+                with open(caminho, "r", encoding="utf-8") as f:
+                    return f.read()
+        except Exception:
+            pass
+    return ""
+
+
+def _extrair_ibscbs(xml_texto: str) -> tuple[float, float]:
     """Soma vIBS e vCBS de cada item, lendo do procNFe assinado/autorizado —
     são os valores de teste do ano-teste 2026 da Reforma Tributária, não
     entram no valor total da nota."""
-    if not xml_path:
+    if not xml_texto:
         return 0.0, 0.0
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         v_ibs = sum(float(el.text) for el in tree.findall(".//nfe:vIBS", ns))
         v_cbs = sum(float(el.text) for el in tree.findall(".//nfe:vCBS", ns))
         return v_ibs, v_cbs
@@ -32,17 +53,17 @@ def _extrair_ibscbs(xml_path: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _extrair_tpamb(xml_path: str) -> str:
+def _extrair_tpamb(xml_texto: str) -> str:
     """Lê o ambiente real da autorização (protNFe/infProt/tpAmb) do procNFe
     — fonte confiável de verdade, ao contrário de um campo "ambiente" que
     nunca existiu na tabela notas (por isso o DANFE sempre exibia o selo
     de homologação, mesmo em notas emitidas de verdade em produção)."""
-    if not xml_path:
+    if not xml_texto:
         return "2"
     try:
         import xml.etree.ElementTree as ET
         ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        tree = ET.parse(xml_path)
+        tree = ET.fromstring(xml_texto.encode("utf-8"))
         tp = (tree.findtext(".//nfe:protNFe/nfe:infProt/nfe:tpAmb", namespaces=ns)
               or tree.findtext(".//nfe:infNFe/nfe:ide/nfe:tpAmb", namespaces=ns) or "2")
         return tp
@@ -150,6 +171,7 @@ def gerar_danfe(nota: dict) -> bytes:
     """
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
+    xml_texto = _obter_xml_texto(nota)
 
     margem = 10 * mm
     larg   = W - 2 * margem   # largura util
@@ -207,7 +229,7 @@ def gerar_danfe(nota: dict) -> bytes:
     c.setFont("Helvetica-Bold", 8)
     c.drawCentredString(xc + wc/2, y - 19*mm, f"Tipo: {tp_nf}")
 
-    ambiente = _extrair_tpamb(nota.get("arquivo_xml", ""))
+    ambiente = _extrair_tpamb(xml_texto)
     if str(ambiente) == "2":
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 8)
@@ -411,7 +433,7 @@ def gerar_danfe(nota: dict) -> bytes:
     _secao(c, margem, y, larg, "CÁLCULO DO IMPOSTO")
     y -= 5*mm
 
-    v_ibs, v_cbs = _extrair_ibscbs(nota.get("arquivo_xml", ""))
+    v_ibs, v_cbs = _extrair_ibscbs(xml_texto)
 
     tot_h = 9*mm
     tots = [
@@ -489,7 +511,7 @@ def gerar_danfe(nota: dict) -> bytes:
         c.drawString(margem+1*mm, y - 6*mm - i*4*mm, l)
 
     # rodape com ambiente
-    if _extrair_tpamb(nota.get("arquivo_xml", "")) == "2":
+    if _extrair_tpamb(xml_texto) == "2":
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 8)
         c.drawCentredString(W/2, margem/2, "AMBIENTE DE HOMOLOGAÇÃO — SEM VALOR FISCAL")

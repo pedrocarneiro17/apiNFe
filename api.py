@@ -327,11 +327,12 @@ def _montar_dados_emissao_api(cliente: dict, body: dict, modelo: int, nnf: int) 
 
 def _resposta_emissao(req_id, registro, nota, ja_existia):
     xml_b64 = pdf_b64 = ""
-    xml_path = (nota or {}).get("arquivo_xml", "")
+    # Lê do Postgres (fonte durável) — nunca do disco do container, que é
+    # efêmero no Railway e some a cada redeploy.
+    xml_conteudo = (nota or {}).get("xml_conteudo", "")
     try:
-        if xml_path and os.path.isfile(xml_path):
-            with open(xml_path, "rb") as f:
-                xml_b64 = base64.b64encode(f.read()).decode("ascii")
+        if xml_conteudo:
+            xml_b64 = base64.b64encode(xml_conteudo.encode("utf-8")).decode("ascii")
         if nota:
             modelo = int(nota.get("modelo", 55))
             if modelo == 65:

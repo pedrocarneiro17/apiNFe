@@ -10,7 +10,7 @@ from functools import wraps
 from datetime import datetime, timedelta
 
 from flask import (Flask, render_template, request, jsonify,
-                   redirect, url_for, session, abort, send_file)
+                   redirect, url_for, session, abort, send_file, Response)
 
 try:
     from dotenv import load_dotenv
@@ -271,12 +271,19 @@ def admin_excluir_nota(nota_id):
 @_requer_login
 def admin_download_xml(nota_id):
     nota = db.get_nota(nota_id)
-    if not nota or not nota.get("arquivo_xml"):
+    if not nota:
         abort(404)
-    caminho = nota["arquivo_xml"]
-    if not os.path.isfile(caminho):
+    # Serve direto do Postgres (fonte durável) — nunca depende do disco
+    # do container, que é efêmero no Railway e some a cada redeploy.
+    conteudo = nota.get("xml_conteudo")
+    if not conteudo:
         abort(404)
-    return send_file(caminho, as_attachment=True)
+    chave = nota.get("chave") or f"NF{nota_id}"
+    return Response(
+        conteudo.encode("utf-8"),
+        mimetype="application/xml",
+        headers={"Content-Disposition": f"attachment; filename=NFe{chave}-procNFe.xml"},
+    )
 
 
 @app.route("/admin/notas/<int:nota_id>/pdf")
