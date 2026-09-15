@@ -208,19 +208,39 @@ def salvar_cliente(nome: str, dados: dict):
                      caminho_certificado, senha_certificado, serie, id_csc, csc)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (id) DO UPDATE SET
-                    razao_social        = EXCLUDED.razao_social,
-                    cnpj                = EXCLUDED.cnpj,
-                    ie                  = EXCLUDED.ie,
+                    razao_social        = CASE WHEN COALESCE(EXCLUDED.razao_social,'')=''
+                                              THEN clientes.razao_social
+                                              ELSE EXCLUDED.razao_social END,
+                    cnpj                = CASE WHEN COALESCE(EXCLUDED.cnpj,'')=''
+                                              THEN clientes.cnpj
+                                              ELSE EXCLUDED.cnpj END,
+                    ie                  = CASE WHEN COALESCE(EXCLUDED.ie,'')=''
+                                              THEN clientes.ie
+                                              ELSE EXCLUDED.ie END,
                     crt                 = EXCLUDED.crt,
-                    uf                  = EXCLUDED.uf,
+                    uf                  = CASE WHEN COALESCE(EXCLUDED.uf,'')=''
+                                              THEN clientes.uf
+                                              ELSE EXCLUDED.uf END,
                     cuf                 = EXCLUDED.cuf,
-                    cep                 = EXCLUDED.cep,
-                    xLgr                = EXCLUDED.xLgr,
-                    nro                 = EXCLUDED.nro,
+                    cep                 = CASE WHEN COALESCE(EXCLUDED.cep,'')=''
+                                              THEN clientes.cep
+                                              ELSE EXCLUDED.cep END,
+                    xLgr                = CASE WHEN COALESCE(EXCLUDED.xLgr,'')=''
+                                              THEN clientes.xLgr
+                                              ELSE EXCLUDED.xLgr END,
+                    nro                 = CASE WHEN COALESCE(EXCLUDED.nro,'')=''
+                                              THEN clientes.nro
+                                              ELSE EXCLUDED.nro END,
                     xCpl                = EXCLUDED.xCpl,
-                    xBairro             = EXCLUDED.xBairro,
-                    cMun                = EXCLUDED.cMun,
-                    xMun                = EXCLUDED.xMun,
+                    xBairro             = CASE WHEN COALESCE(EXCLUDED.xBairro,'')=''
+                                              THEN clientes.xBairro
+                                              ELSE EXCLUDED.xBairro END,
+                    cMun                = CASE WHEN COALESCE(EXCLUDED.cMun,'')=''
+                                              THEN clientes.cMun
+                                              ELSE EXCLUDED.cMun END,
+                    xMun                = CASE WHEN COALESCE(EXCLUDED.xMun,'')=''
+                                              THEN clientes.xMun
+                                              ELSE EXCLUDED.xMun END,
                     fone                = EXCLUDED.fone,
                     xFant               = EXCLUDED.xFant,
                     caminho_certificado = CASE WHEN COALESCE(EXCLUDED.caminho_certificado,'')=''
