@@ -34,7 +34,7 @@
               <td>{{ p.unidade }}</td>
               <td>R$ {{ '%.2f'|format(p.preco|float) }}</td>
               <td>
-                <button class="btn btn-outline btn-sm" onclick="editarProduto({{ p | tojson | e }})">
+                <button class="btn btn-outline btn-sm" onclick="editarProduto({{ p | tojson | forceescape }})">
                   <i class="ti ti-pencil"></i>
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="excluirProduto({{ p.id }})">
