@@ -362,18 +362,6 @@ def proximo_numero_nfe(cliente_id: str, modelo: int = 55) -> int:
     return row[0] if row else 1
 
 
-def definir_numero_nfe(cliente_id: str, modelo: int, valor: int):
-    """Corrige manualmente o próximo número (nNF) de um emitente — usado,
-    por exemplo, depois de números consumidos por engano em homologação
-    (homologação e produção são sequências independentes na SEFAZ, então
-    isso NÃO precisa refletir números já emitidos de verdade em produção)."""
-    coluna = "numero_nfe" if modelo == 55 else "numero_nfce"
-    with _get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"UPDATE clientes SET {coluna} = %s WHERE id = %s",
-                        (int(valor), cliente_id))
-
-
 # ── Produtos ──────────────────────────────────────────────────────
 
 def listar_produtos():
