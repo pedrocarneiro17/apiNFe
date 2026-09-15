@@ -589,7 +589,7 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
         inf_adic = _sub(inf, "infAdic")
         if _tp_amb() == "2":
             _sub(inf_adic, "infCpl",
-                 dados.get("inf_adic", "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"))
+                 dados.get("inf_adic") or "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL")
         elif dados.get("inf_adic"):
             _sub(inf_adic, "infCpl", dados["inf_adic"])
 
@@ -1205,7 +1205,7 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     if dados.get("inf_adic") or _tp_amb() == "2":
         inf_adic = _sub(inf, "infAdic")
         _sub(inf_adic, "infCpl",
-             dados.get("inf_adic", "NFC-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"))
+             dados.get("inf_adic") or "NFC-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL")
 
     # infNFeSupl (QR Code) NÃO entra aqui: pelo schema da NFe, ele é filho de
     # <NFe> (irmão de infNFe e de Signature), inserido só depois de assinar
