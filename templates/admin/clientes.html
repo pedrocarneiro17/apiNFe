@@ -30,7 +30,7 @@
               <td>{{ c.uf }}</td>
               <td>{{ c.crt }}</td>
               <td>
-                <button class="btn btn-outline btn-sm" onclick="editarEmitente({{ c | tojson | e }})">
+                <button class="btn btn-outline btn-sm" onclick="editarEmitente({{ c | tojson | forceescape }})">
                   <i class="ti ti-pencil"></i>
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="excluirEmitente('{{ c.id }}')">
