@@ -56,6 +56,33 @@ def _rows(cur):
     return [dict(r) for r in cur.fetchall()]
 
 
+# Colunas com maiúscula/minúscula misturada (xLgr, xNome_dest, etc.) — o
+# Postgres dobra identificadores não citados pra minúsculas ao devolver o
+# resultado (vira "xlgr"), mas o SQLite do run_dev.py preserva o nome
+# exatamente como foi declarado ("xLgr"). O resto do código (webapp.py,
+# api.py, templates) sempre leu/lê pelo nome em camelCase original — o que
+# funciona em dev (SQLite) mas voltava vazio em produção (Postgres). Em vez
+# de reescrever todo SELECT com aliases citados, normaliza aqui: se a chave
+# camelCase não veio (ou veio vazia) mas a versão em minúsculas tem valor,
+# copia pra camelCase.
+_CAMPOS_CASE_MISTO = [
+    "xLgr", "xCpl", "xBairro", "cMun", "xMun", "xFant",
+    "xNome_dest", "xLgr_dest", "xCpl_dest", "xBairro_dest",
+    "cMun_dest", "xMun_dest",
+]
+
+
+def _normalizar_case_misto(row):
+    if not row:
+        return row
+    for campo in _CAMPOS_CASE_MISTO:
+        if not row.get(campo):
+            v = row.get(campo.lower())
+            if v:
+                row[campo] = v
+    return row
+
+
 # ── Init ──────────────────────────────────────────────────────────
 
 def init_db():
@@ -188,14 +215,17 @@ def listar_clientes():
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute("SELECT * FROM clientes ORDER BY id")
-            return _rows(cur)
+            rows = _rows(cur)
+            for r in rows:
+                _normalizar_case_misto(r)
+            return rows
 
 
 def carregar_cliente(nome: str):
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute("SELECT * FROM clientes WHERE id = %s", (nome,))
-            return _row(cur)
+            return _normalizar_case_misto(_row(cur))
 
 
 def salvar_cliente(nome: str, dados: dict):
@@ -427,6 +457,7 @@ def listar_notas(cliente_id: str = None, status: str = None):
             for r in rows:
                 if isinstance(r.get("itens"), str):
                     r["itens"] = json.loads(r["itens"])
+                _normalizar_case_misto(r)
             return rows
 
 
@@ -446,7 +477,7 @@ def get_nota(nota_id: int):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            return r
+            return _normalizar_case_misto(r)
 
 
 def update_nota_status(nota_id: int, status: str, obs: str = None):
@@ -500,7 +531,7 @@ def get_nota_por_chave(chave: str):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            return r
+            return _normalizar_case_misto(r)
 
 
 # ── Idempotência da API (evita duplicar número em retentativas) ────
