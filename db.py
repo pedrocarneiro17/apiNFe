@@ -199,6 +199,7 @@ def init_db():
         "ALTER TABLE clientes ADD COLUMN IF NOT EXISTS numero_nfce INTEGER DEFAULT 1",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS fin_nfe TEXT DEFAULT '1'",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS ref_nfe TEXT DEFAULT ''",
+        "ALTER TABLE clientes ADD COLUMN IF NOT EXISTS certificado_pfx BYTEA",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -315,6 +316,29 @@ def deletar_cliente(nome: str):
     with _get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM clientes WHERE id = %s", (nome,))
+
+
+def salvar_certificado_bytes(cliente_id: str, dados: bytes):
+    """Guarda o .pfx no Postgres (persistente) — o disco do container
+    (certs/) é efêmero e some a cada deploy no Railway."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE clientes SET certificado_pfx = %s WHERE id = %s",
+                (dados, cliente_id),
+            )
+
+
+def get_certificado_bytes(cliente_id: str):
+    """Recupera os bytes do .pfx do Postgres, para re-materializar o
+    arquivo em disco quando o container perdeu o que tinha (redeploy)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT certificado_pfx FROM clientes WHERE id = %s", (cliente_id,))
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                return None
+            return bytes(row[0])
 
 
 def proximo_numero_nfe(cliente_id: str, modelo: int = 55) -> int:

@@ -359,8 +359,11 @@ def admin_upload_cert(cliente_id):
     if not arq or not arq.filename.lower().endswith(".pfx"):
         return jsonify({"erro": "Envie um arquivo .pfx"}), 400
     nome_arquivo = f"{cliente_id}.pfx"
+    dados_pfx = arq.read()
     caminho = os.path.join(_certs_path(), nome_arquivo)
-    arq.save(caminho)
+    with open(caminho, "wb") as f:
+        f.write(dados_pfx)
+    db.salvar_certificado_bytes(cliente_id, dados_pfx)
     cliente = db.carregar_cliente(cliente_id) or {}
     cliente["caminho_certificado"] = nome_arquivo
     db.salvar_cliente(cliente_id, cliente)
@@ -507,6 +510,15 @@ def _resolver_cert(caminho: str) -> str:
         return caminho
     base = _certs_path()
     candidato = os.path.join(base, os.path.basename(caminho))
+    if not os.path.isfile(candidato):
+        # Disco do container é efêmero (Railway) — se o .pfx sumiu num
+        # redeploy, re-materializa a partir do Postgres (persistente).
+        cliente_id = os.path.splitext(os.path.basename(caminho))[0]
+        dados = db.get_certificado_bytes(cliente_id)
+        if dados:
+            os.makedirs(base, exist_ok=True)
+            with open(candidato, "wb") as f:
+                f.write(dados)
     return candidato if os.path.isfile(candidato) else caminho
 
 

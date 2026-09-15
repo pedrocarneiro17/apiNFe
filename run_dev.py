@@ -166,6 +166,7 @@ def _init_sqlite():
             "ALTER TABLE clientes ADD COLUMN numero_nfce INTEGER DEFAULT 1",
             "ALTER TABLE notas ADD COLUMN fin_nfe TEXT DEFAULT '1'",
             "ALTER TABLE notas ADD COLUMN ref_nfe TEXT DEFAULT ''",
+            "ALTER TABLE clientes ADD COLUMN certificado_pfx BLOB",
         ]:
             try:
                 cur.execute(col_sql)

@@ -130,6 +130,15 @@ def _resolver_cert(caminho: str) -> str:
         return caminho
     base = _certs_path()
     candidato = os.path.join(base, os.path.basename(caminho))
+    if not os.path.isfile(candidato):
+        # Disco do container é efêmero (Railway) — se o .pfx sumiu num
+        # redeploy, re-materializa a partir do Postgres (persistente).
+        cliente_id = os.path.splitext(os.path.basename(caminho))[0]
+        dados = db.get_certificado_bytes(cliente_id)
+        if dados:
+            os.makedirs(base, exist_ok=True)
+            with open(candidato, "wb") as f:
+                f.write(dados)
     return candidato if os.path.isfile(candidato) else caminho
 
 
@@ -189,6 +198,7 @@ def cadastrar_emitente():
         nome_arquivo = f"{emitente_id}.pfx"
         with open(os.path.join(_certs_path(), nome_arquivo), "wb") as f:
             f.write(pfx_bytes)
+        db.salvar_certificado_bytes(emitente_id, pfx_bytes)
         caminho_certificado = nome_arquivo
 
     cliente_dados = {campo: dados.get(campo, existente.get(campo, "")) for campo in _CAMPOS_CLIENTE}
