@@ -62,6 +62,24 @@ def _extrair_dhrecbto(xml_path: str) -> str:
         return ""
 
 
+def _extrair_tpamb(xml_path: str) -> str:
+    """Lê o ambiente real da autorização (protNFe/infProt/tpAmb) do procNFe
+    — fonte confiável de verdade, ao contrário de um campo "ambiente" que
+    nunca existiu na tabela notas (por isso o cupom sempre exibia o selo
+    de homologação, mesmo em notas emitidas de verdade em produção)."""
+    if not xml_path:
+        return "2"
+    try:
+        import xml.etree.ElementTree as ET
+        ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
+        tree = ET.parse(xml_path)
+        tp = (tree.findtext(".//nfe:protNFe/nfe:infProt/nfe:tpAmb", namespaces=ns)
+              or tree.findtext(".//nfe:infNFe/nfe:ide/nfe:tpAmb", namespaces=ns) or "2")
+        return tp
+    except Exception:
+        return "2"
+
+
 def _extrair_urlchave(xml_path: str) -> str:
     """Lê a URL de consulta por chave (infNFeSupl/urlChave) do procNFe."""
     if not xml_path:
@@ -145,7 +163,7 @@ def _desenhar_cupom(c, nota: dict, itens: list, y_start: float) -> float:
 
     # Divisão VIII — em homologação o texto abaixo do cabeçalho é exigido
     # literalmente (não é livre, tem que ser exatamente este):
-    if str(nota.get("ambiente","2")) == "2":
+    if _extrair_tpamb(nota.get("arquivo_xml", "")) == "2":
         linha("EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO", size=6.5, bold=True, center=True, color=colors.red)
         linha("SEM VALOR FISCAL", size=6.5, bold=True, center=True, color=colors.red)
     divisor()

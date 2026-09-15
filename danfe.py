@@ -32,6 +32,24 @@ def _extrair_ibscbs(xml_path: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
+def _extrair_tpamb(xml_path: str) -> str:
+    """Lê o ambiente real da autorização (protNFe/infProt/tpAmb) do procNFe
+    — fonte confiável de verdade, ao contrário de um campo "ambiente" que
+    nunca existiu na tabela notas (por isso o DANFE sempre exibia o selo
+    de homologação, mesmo em notas emitidas de verdade em produção)."""
+    if not xml_path:
+        return "2"
+    try:
+        import xml.etree.ElementTree as ET
+        ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
+        tree = ET.parse(xml_path)
+        tp = (tree.findtext(".//nfe:protNFe/nfe:infProt/nfe:tpAmb", namespaces=ns)
+              or tree.findtext(".//nfe:infNFe/nfe:ide/nfe:tpAmb", namespaces=ns) or "2")
+        return tp
+    except Exception:
+        return "2"
+
+
 # ── helpers de estilo ─────────────────────────────────────────────
 
 def _style(size=7, bold=False, align=TA_LEFT, color=colors.black):
@@ -189,7 +207,7 @@ def gerar_danfe(nota: dict) -> bytes:
     c.setFont("Helvetica-Bold", 8)
     c.drawCentredString(xc + wc/2, y - 19*mm, f"Tipo: {tp_nf}")
 
-    ambiente = nota.get("ambiente", "2")
+    ambiente = _extrair_tpamb(nota.get("arquivo_xml", ""))
     if str(ambiente) == "2":
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 8)
@@ -471,7 +489,7 @@ def gerar_danfe(nota: dict) -> bytes:
         c.drawString(margem+1*mm, y - 6*mm - i*4*mm, l)
 
     # rodape com ambiente
-    if str(nota.get("ambiente", "2")) == "2":
+    if _extrair_tpamb(nota.get("arquivo_xml", "")) == "2":
         c.setFillColor(colors.red)
         c.setFont("Helvetica-Bold", 8)
         c.drawCentredString(W/2, margem/2, "AMBIENTE DE HOMOLOGAÇÃO — SEM VALOR FISCAL")
