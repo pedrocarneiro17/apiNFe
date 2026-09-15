@@ -83,6 +83,25 @@ def _normalizar_case_misto(row):
     return row
 
 
+def _garantir_xml_disco(row):
+    """Re-materializa o procNFe em disco a partir do Postgres se o arquivo
+    sumiu (disco efêmero do Railway some a cada redeploy) — sem isso,
+    download de XML e geração de PDF (que leem tpAmb/dhRecbto/QR do
+    arquivo) quebravam depois do primeiro deploy seguinte à emissão."""
+    if not row:
+        return row
+    caminho = row.get("arquivo_xml")
+    conteudo = row.get("xml_conteudo")
+    if caminho and conteudo and not os.path.isfile(caminho):
+        try:
+            os.makedirs(os.path.dirname(caminho), exist_ok=True)
+            with open(caminho, "w", encoding="utf-8") as f:
+                f.write(conteudo)
+        except Exception:
+            pass
+    return row
+
+
 # ── Init ──────────────────────────────────────────────────────────
 
 def init_db():
@@ -200,6 +219,7 @@ def init_db():
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS fin_nfe TEXT DEFAULT '1'",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS ref_nfe TEXT DEFAULT ''",
         "ALTER TABLE clientes ADD COLUMN IF NOT EXISTS certificado_pfx BYTEA",
+        "ALTER TABLE notas ADD COLUMN IF NOT EXISTS xml_conteudo TEXT",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -505,7 +525,8 @@ def get_nota(nota_id: int):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            return _normalizar_case_misto(r)
+            r = _normalizar_case_misto(r)
+            return _garantir_xml_disco(r)
 
 
 def update_nota_status(nota_id: int, status: str, obs: str = None):
@@ -518,11 +539,23 @@ def update_nota_status(nota_id: int, status: str, obs: str = None):
 
 
 def update_nota_emitida(nota_id: int, chave: str, n_prot: str, xml_path: str):
+    # Guarda o conteúdo do XML também no Postgres — o disco do container
+    # (downloads/) é efêmero no Railway e some a cada redeploy, quebrando
+    # download do XML e geração de PDF (que lê tpAmb/dhRecbto etc. do
+    # arquivo). Lido aqui, na hora, enquanto o arquivo ainda existe.
+    xml_conteudo = None
+    try:
+        if xml_path and os.path.isfile(xml_path):
+            with open(xml_path, "r", encoding="utf-8") as f:
+                xml_conteudo = f.read()
+    except Exception:
+        pass
     with _get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE notas SET chave=%s, n_prot=%s, arquivo_xml=%s, status='emitido' WHERE id=%s",
-                (chave, n_prot, xml_path, nota_id),
+                "UPDATE notas SET chave=%s, n_prot=%s, arquivo_xml=%s, "
+                "xml_conteudo=%s, status='emitido' WHERE id=%s",
+                (chave, n_prot, xml_path, xml_conteudo, nota_id),
             )
 
 
@@ -559,7 +592,8 @@ def get_nota_por_chave(chave: str):
             r = _row(cur)
             if r and isinstance(r.get("itens"), str):
                 r["itens"] = json.loads(r["itens"])
-            return _normalizar_case_misto(r)
+            r = _normalizar_case_misto(r)
+            return _garantir_xml_disco(r)
 
 
 # ── Idempotência da API (evita duplicar número em retentativas) ────
