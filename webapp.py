@@ -377,6 +377,20 @@ def admin_excluir_cliente(cliente_id):
     return jsonify({"ok": True})
 
 
+@app.route("/admin/clientes/<cliente_id>/numeracao", methods=["POST"])
+@_requer_login
+def admin_definir_numeracao(cliente_id):
+    """Corrige manualmente o próximo número (nNF) de NF-e/NFC-e do emitente
+    — ex: depois de números consumidos por engano em homologação."""
+    body = request.get_json(force=True) or {}
+    modelo = int(body.get("modelo", 55))
+    valor = int(body.get("valor", 1))
+    if modelo not in (55, 65) or valor < 1:
+        return jsonify({"erro": "Parâmetros inválidos"}), 400
+    db.definir_numero_nfe(cliente_id, modelo, valor)
+    return jsonify({"ok": True})
+
+
 # ── Produtos ──────────────────────────────────────────────────────
 
 @app.route("/admin/produtos")
