@@ -191,6 +191,11 @@ def init_db():
                     duracao_ms     INTEGER,
                     criado_em      TIMESTAMP DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS dfe_nsu_cursor (
+                    cliente_id TEXT PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+                    ultimo_nsu BIGINT DEFAULT 0
+                );
             """)
 
     migracoes = [
@@ -363,6 +368,26 @@ def proximo_numero_nfe(cliente_id: str, modelo: int = 55) -> int:
             """, (cliente_id,))
             row = cur.fetchone()
     return row[0] if row else 1
+
+
+def get_ultimo_nsu_dfe(cliente_id: str) -> int:
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ultimo_nsu FROM dfe_nsu_cursor WHERE cliente_id = %s",
+                        (cliente_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+
+def salvar_ultimo_nsu_dfe(cliente_id: str, nsu: int):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO dfe_nsu_cursor (cliente_id, ultimo_nsu)
+                   VALUES (%s, %s)
+                   ON CONFLICT (cliente_id) DO UPDATE SET ultimo_nsu = EXCLUDED.ultimo_nsu""",
+                (cliente_id, int(nsu)),
+            )
 
 
 # ── Produtos ──────────────────────────────────────────────────────

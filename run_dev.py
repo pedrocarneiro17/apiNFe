@@ -152,6 +152,9 @@ def _init_sqlite():
                 status_code INTEGER, sucesso INTEGER, erro TEXT, duracao_ms INTEGER,
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS dfe_nsu_cursor (
+                cliente_id TEXT PRIMARY KEY, ultimo_nsu INTEGER DEFAULT 0
+            );
         """)
         conn.commit()
 

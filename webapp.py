@@ -712,6 +712,67 @@ def inutilizar_numeracao():
                            form=request.form)
 
 
+# ── Distribuição DFe (buscar notas de um CNPJ direto na SEFAZ) ────────────
+
+@app.route("/admin/distribuicao", methods=["GET", "POST"])
+@_requer_login
+def admin_distribuicao():
+    clientes = db.listar_clientes()
+
+    if request.method == "GET":
+        return render_template("admin/distribuicao.html", clientes=clientes)
+
+    cliente_id = request.form.get("cliente_id", "")
+    acao = request.form.get("acao", "buscar")
+
+    cliente = next((c for c in clientes if str(c["id"]) == str(cliente_id)), None)
+    if not cliente:
+        return render_template("admin/distribuicao.html", clientes=clientes,
+                               erro="Emitente não encontrado.")
+
+    if acao == "resetar":
+        db.salvar_ultimo_nsu_dfe(cliente_id, 0)
+        return render_template("admin/distribuicao.html", clientes=clientes,
+                               cliente_id=cliente_id,
+                               aviso="Cursor de sincronização zerado — a próxima busca recomeça do início.")
+
+    if not cliente.get("caminho_certificado"):
+        return render_template("admin/distribuicao.html", clientes=clientes,
+                               cliente_id=cliente_id,
+                               erro="Emitente sem certificado digital cadastrado.")
+
+    from fluxo_nfe_api import distribuir_dfe, _parse_resumo_nfe, _pfx_para_pem
+    import shutil
+
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+        caminho_pfx, cliente.get("senha_certificado", "")
+    )
+    ult_nsu = db.get_ultimo_nsu_dfe(cliente_id)
+    try:
+        resultado = distribuir_dfe(cliente["cnpj"], ult_nsu, cert_path, key_path)
+    except Exception as e:
+        return render_template("admin/distribuicao.html", clientes=clientes,
+                               cliente_id=cliente_id,
+                               erro=f"Erro ao consultar SEFAZ: {e}")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if resultado["ultNSU"] > ult_nsu:
+        db.salvar_ultimo_nsu_dfe(cliente_id, resultado["ultNSU"])
+
+    documentos = []
+    for doc in resultado["documentos"]:
+        item = {"nsu": doc["nsu"], "tipo": doc["tipo"], "schema": doc["schema"]}
+        if doc["tipo"] in ("resumo", "completa"):
+            item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        documentos.append(item)
+
+    return render_template("admin/distribuicao.html", clientes=clientes,
+                           cliente_id=cliente_id, resultado=resultado,
+                           documentos=documentos)
+
+
 if __name__ == "__main__":
     print("Acesse: http://localhost:5000/admin/notas")
     app.run(debug=False, port=5000)

@@ -28,6 +28,8 @@ Dependências:
 import os
 import re
 import random
+import gzip
+import base64
 import hashlib
 import tempfile
 import shutil
@@ -148,6 +150,16 @@ _UF_AUTORIZADOR: dict[str, str] = {
     "SE": "SVRS", "SP": "SP",   "TO": "SVRS",
 }
 
+# Distribuição DFe (NFeDistribuicaoDFe) — webservice ÚNICO nacional (AN),
+# não roteado por UF. Só modelo 55 (NF-e); NFC-e não é coberto por esse
+# serviço. cUF do cabeçalho SOAP e cUFAutor do corpo = 91 (código
+# convencional do Ambiente Nacional, não a UF do emitente).
+_URL_DISTRIBUICAO_DFE: dict[str, str] = {
+    "prod": "https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
+    "homo": "https://hom.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
+}
+_CUF_AN = 91
+
 # UF → código IBGE
 _UF_IBGE: dict[str, int] = {
     "AC": 12, "AL": 27, "AM": 13, "AP": 16, "BA": 29,
@@ -187,6 +199,11 @@ def _url_servico_nfce(uf: str, servico: str) -> str:
     env = "prod" if _is_prod() else "homo"
     base = _AUTORIZADORES_NFCE[autorizador][env]
     return f"{base}{servico}"
+
+
+def _url_distribuicao_dfe() -> str:
+    """URL do webservice NFeDistribuicaoDFe — único, nacional, sem roteamento por UF."""
+    return _URL_DISTRIBUICAO_DFE["prod" if _is_prod() else "homo"]
 
 
 def _url_consulta_nfce(uf: str) -> str:
@@ -731,6 +748,108 @@ def consultar_status_servico(uf: str, cert_path: str, key_path: str) -> dict:
     xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
     print(f"[nfe] Status: cStat={cstat} | {xmot}", flush=True)
     return {"cStat": cstat, "xMotivo": xmot}
+
+
+# ─── Distribuição DFe — busca notas onde o CNPJ é emitente OU destinatário ─
+#
+# Só modelo 55 (NF-e). Como destinatário, só vem o "resumo" (resNFe) até o
+# CNPJ fazer a manifestação do destinatário — a NF-e completa (procNFe) fica
+# disponível direto quando você é o emitente, ou depois de manifestar quando
+# é destinatário (manifestação ainda não implementada neste sistema).
+
+_TIPOS_SCHEMA = {
+    "resNFe": "resumo", "procNFe": "completa",
+    "resEvento": "evento_resumo", "procEventoNFe": "evento_completo",
+}
+
+
+def _classificar_schema(schema: str) -> str:
+    prefixo = schema.split("_")[0] if schema else ""
+    return _TIPOS_SCHEMA.get(prefixo, "outro")
+
+
+def distribuir_dfe(cnpj: str, ult_nsu: int, cert_path: str, key_path: str) -> dict:
+    """
+    Consulta NFeDistribuicaoDFe a partir do NSU informado (0 = do início).
+    Devolve até 50 documentos por chamada — repita com o `ultNSU` retornado
+    até `tem_mais` vir False pra cobrir tudo.
+    """
+    xml = (f'<distDFeInt versao="1.01" xmlns="{NS}">'
+           f'<tpAmb>{_tp_amb()}</tpAmb>'
+           f'<cUFAutor>{_CUF_AN}</cUFAutor>'
+           f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
+           f'<distNSU><ultNSU>{str(ult_nsu).zfill(15)}</ultNSU></distNSU>'
+           f'</distDFeInt>')
+    url  = _url_distribuicao_dfe()
+    resp = _enviar_soap(url, "NFeDistribuicaoDFe", _CUF_AN, xml, cert_path, key_path)
+    body = _extrair_body(resp)
+    ns   = {"nfe": NS}
+    cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    ult   = int(body.findtext(".//nfe:ultNSU", namespaces=ns) or "0")
+    maxn  = int(body.findtext(".//nfe:maxNSU", namespaces=ns) or "0")
+
+    documentos = []
+    for doc_zip in body.findall(".//nfe:docZip", namespaces=ns):
+        nsu    = doc_zip.get("NSU", "")
+        schema = doc_zip.get("schema", "")
+        try:
+            xml_doc = gzip.decompress(base64.b64decode(doc_zip.text))
+        except Exception as e:
+            print(f"[nfe] erro ao descompactar docZip NSU={nsu}: {e}", flush=True)
+            continue
+        documentos.append({
+            "nsu": nsu, "schema": schema,
+            "tipo": _classificar_schema(schema),
+            "xml": xml_doc,
+        })
+
+    print(f"[nfe] Distribuição DFe: cStat={cstat} | ultNSU={ult} | maxNSU={maxn} "
+          f"| docs={len(documentos)}", flush=True)
+    return {
+        "cStat": cstat, "xMotivo": xmot,
+        "ultNSU": ult, "maxNSU": maxn,
+        "tem_mais": ult < maxn,
+        "documentos": documentos,
+    }
+
+
+def _parse_resumo_nfe(xml_bytes: bytes, cnpj_consultado: str) -> dict:
+    """
+    Extrai os campos exibíveis de um resNFe (resumo) ou procNFe (completa).
+    `papel` compara o CNPJ do emitente do documento com o CNPJ consultado —
+    "emitente" (nota emitida por ele) ou "destinatario" (nota recebida).
+    """
+    try:
+        root = etree.fromstring(xml_bytes)
+    except Exception:
+        return {}
+    ns = {"nfe": NS}
+
+    def t(*tags):
+        return root.findtext(".//nfe:" + "/nfe:".join(tags), namespaces=ns) or ""
+
+    # resNFe usa nomes de tag próprios (CNPJ/xNome do emitente diretos);
+    # procNFe usa a estrutura completa emit/dest.
+    cnpj_emit = t("CNPJ") or t("emit", "CNPJ")
+    x_nome    = t("xNome") or t("emit", "xNome")
+    dh_emi    = t("dhEmi") or t("infNFe", "ide", "dhEmi")
+    v_nf      = t("vNF") or t("infNFe", "total", "ICMSTot", "vNF")
+    c_sit     = t("cSitNFe")
+    ch_nfe    = t("chNFe")
+    if not ch_nfe:
+        inf_el = root.find(".//nfe:infNFe", namespaces=ns)
+        if inf_el is not None:
+            ch_nfe = (inf_el.get("Id", "") or "")[3:]  # remove prefixo "NFe"
+
+    alvo = _so_numeros(cnpj_consultado)
+    papel = "emitente" if _so_numeros(cnpj_emit)[:8] == alvo[:8] else "destinatario"
+
+    return {
+        "chave": ch_nfe, "cnpj_emit": cnpj_emit, "xNome_emit": x_nome,
+        "dhEmi": dh_emi[:10] if dh_emi else "", "vNF": v_nf,
+        "cSitNFe": c_sit, "papel": papel,
+    }
 
 
 def _autorizar(nfe_element: etree._Element, uf: str, cuf: int,

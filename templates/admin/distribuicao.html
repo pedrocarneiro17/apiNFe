@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Distribuição DFe — Emissor Fiscal{% endblock %}
+{% block nav_distribuicao %}active{% endblock %}
+{% block page_title %}Buscar Notas na SEFAZ{% endblock %}
+{% block page_subtitle %}Consulta direto na SEFAZ as NF-e associadas ao CNPJ do emitente{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:900px">
+  <div class="card-title">Distribuição DFe (NFeDistribuicaoDFe)</div>
+
+  {% if erro %}
+    <div class="alert alert-danger">{{ erro }}</div>
+  {% endif %}
+  {% if aviso %}
+    <div class="alert alert-success">{{ aviso }}</div>
+  {% endif %}
+
+  <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;
+              padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
+    <strong>Só NF-e (modelo 55)</strong> — NFC-e não é coberto por esse
+    serviço da SEFAZ. Notas onde o emitente aqui é o <strong>destinatário</strong>
+    aparecem só como <strong>resumo</strong> (chave, emitente, valor, data,
+    situação) até fazer a manifestação do destinatário na SEFAZ — recurso
+    ainda não implementado neste sistema. Notas onde ele é o
+    <strong>emitente</strong> já vêm completas.
+  </div>
+
+  <form method="POST">
+    <div class="form-group">
+      <label>Emitente *</label>
+      <select name="cliente_id" required>
+        <option value="">Selecione o emitente...</option>
+        {% for c in clientes %}
+          <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>
+            {{ c.id }} — {{ c.razao_social }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="display:flex;gap:.75rem">
+      <button type="submit" name="acao" value="buscar" class="btn btn-primary">
+        <i class="ti ti-search"></i> Buscar
+      </button>
+      <button type="submit" name="acao" value="resetar" class="btn btn-outline"
+              onclick="return confirm('Zerar o cursor de sincronização? A próxima busca recomeça do início.')">
+        <i class="ti ti-refresh"></i> Ressincronizar do zero
+      </button>
+    </div>
+  </form>
+</div>
+
+{% if resultado %}
+<div class="card" style="max-width:900px;margin-top:1rem">
+  <div class="card-title">
+    Resultado
+    <span style="font-size:.78rem;color:var(--muted);font-weight:normal">
+      cStat {{ resultado.cStat }} — {{ resultado.xMotivo }}
+      · NSU {{ resultado.ultNSU }} de {{ resultado.maxNSU }}
+      {% if resultado.tem_mais %} · há mais documentos, clique "Buscar" de novo pra continuar{% endif %}
+    </span>
+  </div>
+
+  {% if documentos %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>NSU</th><th>Tipo</th><th>Papel</th><th>Emitente</th>
+          <th>Data</th><th>Valor</th><th>Situação</th><th>Chave</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in documentos %}
+        <tr>
+          <td style="font-size:.72rem;color:var(--muted)">{{ d.nsu }}</td>
+          <td>{{ d.tipo }}</td>
+          <td>{{ d.papel or '—' }}</td>
+          <td>{{ d.xNome_emit or '—' }}</td>
+          <td>{{ d.dhEmi or '—' }}</td>
+          <td>{{ 'R$ %.2f'|format(d.vNF|float) if d.vNF else '—' }}</td>
+          <td>{{ d.cSitNFe or '—' }}</td>
+          <td style="font-size:.7rem;color:var(--muted)">{{ d.chave or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p style="color:var(--muted);padding:0 1rem 1rem">Nenhum documento novo desde a última busca.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
