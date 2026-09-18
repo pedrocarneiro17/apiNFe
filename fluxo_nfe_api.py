@@ -160,6 +160,14 @@ _URL_DISTRIBUICAO_DFE: dict[str, str] = {
 }
 _CUF_AN = 91
 
+# Manifestação do destinatário — também webservice único nacional (AN), não
+# por UF (é o destinatário se manifestando, não o emitente; a UF dele é
+# irrelevante pra SEFAZ nesse evento).
+_URL_MANIFESTACAO_AN: dict[str, str] = {
+    "prod": "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+    "homo": "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+}
+
 # UF → código IBGE
 _UF_IBGE: dict[str, int] = {
     "AC": 12, "AL": 27, "AM": 13, "AP": 16, "BA": 29,
@@ -204,6 +212,13 @@ def _url_servico_nfce(uf: str, servico: str) -> str:
 def _url_distribuicao_dfe() -> str:
     """URL do webservice NFeDistribuicaoDFe — único, nacional, sem roteamento por UF."""
     return _URL_DISTRIBUICAO_DFE["prod" if _is_prod() else "homo"]
+
+
+def _url_manifestacao_destinatario() -> str:
+    """URL do NFeRecepcaoEvento4 pro evento de manifestação do destinatário
+    — hospedado no Ambiente Nacional, diferente do cancelamento (que vai
+    pro autorizador da UF do EMITENTE)."""
+    return _URL_MANIFESTACAO_AN["prod" if _is_prod() else "homo"]
 
 
 def _url_consulta_nfce(uf: str) -> str:
@@ -931,6 +946,79 @@ def cancelar_nfe(chave: str, n_prot: str, justificativa: str,
     xmot  = body.findtext(".//nfe:infEvento/nfe:xMotivo", namespaces=ns) \
          or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
     print(f"[nfe] Cancelamento: cStat={cstat} | {xmot}", flush=True)
+    return {"cStat": cstat, "xMotivo": xmot}
+
+
+# ─── Manifestação do Destinatário ─────────────────────────────────
+#
+# Necessária pra liberar o XML completo (procNFe) de uma nota onde você é
+# DESTINATÁRIO — a Distribuição DFe só devolve resumo (resNFe) até isso ser
+# feito. Diferente do cancelamento: é o destinatário se manifestando sobre
+# uma nota de outra empresa, então vai pro Ambiente Nacional (cOrgao=91),
+# não pro autorizador da UF de ninguém.
+
+_DESC_EVENTO_MANIFESTACAO = {
+    "210200": "Confirmacao da Operacao",
+    "210210": "Ciencia da Operacao",
+    "210220": "Desconhecimento da Operacao",
+    "210240": "Operacao nao Realizada",
+}
+
+
+def manifestar_destinatario(chave: str, cnpj: str, cert_path: str, key_path: str,
+                            chave_privada, certificado,
+                            tp_evento: str = "210210", justificativa: str = "") -> dict:
+    """
+    Registra a manifestação do destinatário sobre uma NF-e de terceiros.
+
+    tp_evento:
+      210210 = Ciência da Operação — não confirma nem nega nada, só
+               desbloqueia o XML completo na próxima Distribuição DFe.
+      210200 = Confirmação da Operação
+      210220 = Desconhecimento da Operação (exige justificativa)
+      210240 = Operação não Realizada (exige justificativa)
+
+    Prazo da SEFAZ: até 180 dias da emissão pra manifestar (nacional).
+    """
+    if tp_evento not in _DESC_EVENTO_MANIFESTACAO:
+        raise ValueError(f"tp_evento inválido: {tp_evento!r}")
+    if tp_evento in ("210220", "210240") and len(justificativa.strip()) < 15:
+        raise ValueError("Justificativa obrigatória (mín. 15 caracteres) para esse tipo de manifestação.")
+
+    dh_evento = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%dT%H:%M:%S-03:00")
+    id_evento = f"ID{tp_evento}{chave}01"
+
+    env = etree.Element(f"{{{NS}}}envEvento", versao="1.00", nsmap={None: NS})
+    _sub(env, "idLote", "1")
+    evento = etree.SubElement(env, f"{{{NS}}}evento", versao="1.00")
+    inf_ev = etree.SubElement(evento, f"{{{NS}}}infEvento", Id=id_evento)
+    _sub(inf_ev, "cOrgao",     _CUF_AN)
+    _sub(inf_ev, "tpAmb",      _tp_amb())
+    _sub(inf_ev, "CNPJ",       _so_numeros(cnpj))
+    _sub(inf_ev, "chNFe",      chave)
+    _sub(inf_ev, "dhEvento",   dh_evento)
+    _sub(inf_ev, "tpEvento",   tp_evento)
+    _sub(inf_ev, "nSeqEvento", "1")
+    _sub(inf_ev, "verEvento",  "1.00")
+    det = etree.SubElement(inf_ev, f"{{{NS}}}detEvento", versao="1.00")
+    _sub(det, "descEvento", _DESC_EVENTO_MANIFESTACAO[tp_evento])
+    if tp_evento in ("210220", "210240"):
+        _sub(det, "xJust", justificativa.strip())
+
+    evento_assinado = assinar_evento(evento, chave_privada, certificado)
+    if evento_assinado is not evento:
+        env.replace(evento, evento_assinado)
+    env_str = etree.tostring(env, encoding="unicode")
+
+    url  = _url_manifestacao_destinatario()
+    resp = _enviar_soap(url, "NFeRecepcaoEvento4", _CUF_AN, env_str, cert_path, key_path)
+    body = _extrair_body(resp)
+    ns   = {"nfe": NS}
+    cstat = body.findtext(".//nfe:infEvento/nfe:cStat",   namespaces=ns) \
+         or body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:infEvento/nfe:xMotivo", namespaces=ns) \
+         or body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    print(f"[nfe] Manifestação destinatário: tpEvento={tp_evento} cStat={cstat} | {xmot}", flush=True)
     return {"cStat": cstat, "xMotivo": xmot}
 
 

@@ -736,6 +736,44 @@ def admin_distribuicao():
                                cliente_id=cliente_id,
                                aviso="Cursor de sincronização zerado — a próxima busca recomeça do início.")
 
+    if acao == "manifestar":
+        chave = request.form.get("chave", "").strip()
+        tp_evento = request.form.get("tp_evento", "210210")
+        justificativa = request.form.get("justificativa", "").strip()
+        if not cliente.get("caminho_certificado"):
+            return render_template("admin/distribuicao.html", clientes=clientes,
+                                   cliente_id=cliente_id,
+                                   erro="Emitente sem certificado digital cadastrado.")
+        from fluxo_nfe_api import manifestar_destinatario, _pfx_para_pem
+        import shutil
+        caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+        try:
+            resultado_manif = manifestar_destinatario(
+                chave=chave, cnpj=cliente["cnpj"],
+                cert_path=cert_path, key_path=key_path,
+                chave_privada=chave_privada, certificado=certificado,
+                tp_evento=tp_evento, justificativa=justificativa,
+            )
+        except Exception as e:
+            return render_template("admin/distribuicao.html", clientes=clientes,
+                                   cliente_id=cliente_id,
+                                   erro=f"Erro ao manifestar: {e}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        if resultado_manif.get("cStat") != "135":
+            return render_template("admin/distribuicao.html", clientes=clientes,
+                                   cliente_id=cliente_id,
+                                   erro=f"Manifestação recusada [{resultado_manif['cStat']}]: {resultado_manif['xMotivo']}")
+        return render_template("admin/distribuicao.html", clientes=clientes,
+                               cliente_id=cliente_id,
+                               aviso=f"Manifestação registrada [{resultado_manif['cStat']}]. "
+                                     f"O XML completo dessa nota aparece numa próxima busca, "
+                                     f"depois da SEFAZ processar.")
+
     if not cliente.get("caminho_certificado"):
         return render_template("admin/distribuicao.html", clientes=clientes,
                                cliente_id=cliente_id,

@@ -20,9 +20,11 @@
     <strong>Só NF-e (modelo 55)</strong> — NFC-e não é coberto por esse
     serviço da SEFAZ. Notas onde o emitente aqui é o <strong>destinatário</strong>
     aparecem só como <strong>resumo</strong> (chave, emitente, valor, data,
-    situação) até fazer a manifestação do destinatário na SEFAZ — recurso
-    ainda não implementado neste sistema. Notas onde ele é o
-    <strong>emitente</strong> já vêm completas.
+    situação) até fazer a <strong>manifestação do destinatário</strong> —
+    clique "Manifestar" na linha da nota (registra "Ciência da Operação",
+    não confirma nem nega o conteúdo). O XML completo aparece numa busca
+    seguinte, depois da SEFAZ processar. Notas onde ele é o
+    <strong>emitente</strong> já vêm completas, sem precisar manifestar.
   </div>
 
   <form method="POST">
@@ -66,7 +68,7 @@
       <thead>
         <tr>
           <th>NSU</th><th>Tipo</th><th>Papel</th><th>Emitente</th>
-          <th>Data</th><th>Valor</th><th>Situação</th><th>Chave</th>
+          <th>Data</th><th>Valor</th><th>Situação</th><th>Chave</th><th>Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -80,6 +82,18 @@
           <td>{{ 'R$ %.2f'|format(d.vNF|float) if d.vNF else '—' }}</td>
           <td>{{ d.cSitNFe or '—' }}</td>
           <td style="font-size:.7rem;color:var(--muted)">{{ d.chave or '—' }}</td>
+          <td>
+            {% if d.tipo == 'resumo' and d.papel == 'destinatario' and d.chave %}
+            <form method="POST" style="display:inline">
+              <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+              <input type="hidden" name="chave" value="{{ d.chave }}">
+              <input type="hidden" name="tp_evento" value="210210">
+              <button type="submit" name="acao" value="manifestar" class="btn btn-outline btn-sm">
+                Manifestar (Ciência)
+              </button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
