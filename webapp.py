@@ -788,7 +788,7 @@ def admin_distribuicao():
     )
     ult_nsu = db.get_ultimo_nsu_dfe(cliente_id)
     try:
-        resultado = distribuir_dfe(cliente["cnpj"], ult_nsu, cert_path, key_path)
+        resultado = distribuir_dfe(cliente["cnpj"], cliente["uf"], ult_nsu, cert_path, key_path)
     except Exception as e:
         return render_template("admin/distribuicao.html", clientes=clientes,
                                cliente_id=cliente_id,

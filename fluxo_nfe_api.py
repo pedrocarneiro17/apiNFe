@@ -151,18 +151,20 @@ _UF_AUTORIZADOR: dict[str, str] = {
 }
 
 # Distribuição DFe (NFeDistribuicaoDFe) — webservice ÚNICO nacional (AN),
-# não roteado por UF. Só modelo 55 (NF-e); NFC-e não é coberto por esse
-# serviço. cUF do cabeçalho SOAP e cUFAutor do corpo = 91 (código
-# convencional do Ambiente Nacional, não a UF do emitente).
+# não roteado por UF (a mesma URL serve pra todo mundo). Só modelo 55
+# (NF-e); NFC-e não é coberto por esse serviço. Esse envelope SOAP não usa
+# cabeçalho nfeCabecMsg (ver _montar_soap_distribuicao) — cUFAutor no corpo
+# é a UF REAL do autor do pedido (o emitente consultando), não 91/AN;
+# confirmado contra a implementação de referência (nfephp-org/sped-nfe).
 _URL_DISTRIBUICAO_DFE: dict[str, str] = {
     "prod": "https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
-    "homo": "https://hom.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
+    "homo": "https://hom1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
 }
-_CUF_AN = 91
 
-# Manifestação do destinatário — também webservice único nacional (AN), não
-# por UF (é o destinatário se manifestando, não o emitente; a UF dele é
-# irrelevante pra SEFAZ nesse evento).
+# Manifestação do destinatário — webservice único nacional (AN), não por UF
+# (é o destinatário se manifestando, não o emitente; a UF dele é irrelevante
+# pra SEFAZ nesse evento) — aqui sim cOrgao=91 é o valor correto.
+_CUF_AN = 91
 _URL_MANIFESTACAO_AN: dict[str, str] = {
     "prod": "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
     "homo": "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
@@ -742,6 +744,57 @@ def _extrair_body(resp_xml: etree._Element) -> etree._Element:
     return next(iter(body)) if body is not None else resp_xml
 
 
+def _montar_soap_distribuicao(xml_inner: str) -> bytes:
+    """
+    Envelope SOAP do NFeDistribuicaoDFe — layout DIFERENTE dos demais
+    serviços (confirmado contra a implementação de referência
+    nfephp-org/sped-nfe, `Tools::sefazDistDFe`):
+      - SEM <nfeCabecMsg> no Header (esse webservice não usa cabeçalho).
+      - O corpo vem embrulhado no nome do MÉTODO (nfeDistDFeInteresse),
+        não direto dentro de nfeDadosMsg como nos outros serviços.
+    Usar _montar_soap genérico aqui causa 500 da SEFAZ (envelope não
+    reconhecido).
+    """
+    ns_wsdl = f"{WSDL_BASE}/NFeDistribuicaoDFe"
+    soap = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<soap12:Envelope'
+        f'  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        f'  xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+        f'  xmlns:soap12="{_SOAP_NS}">'
+        f'<soap12:Body>'
+        f'<nfeDistDFeInteresse xmlns="{ns_wsdl}">'
+        f'<nfeDadosMsg xmlns="{ns_wsdl}">'
+        f'{xml_inner}'
+        f'</nfeDadosMsg>'
+        f'</nfeDistDFeInteresse>'
+        f'</soap12:Body>'
+        f'</soap12:Envelope>'
+    )
+    return soap.encode("utf-8")
+
+
+def _enviar_soap_distribuicao(url: str, xml_inner: str,
+                              cert_path: str, key_path: str) -> etree._Element:
+    """Envia a consulta de Distribuição DFe (envelope/SOAPAction próprios)."""
+    soap_bytes = _montar_soap_distribuicao(xml_inner)
+    soap_action = f'"{WSDL_BASE}/NFeDistribuicaoDFe/nfeDistDFeInteresse"'
+    print(f"[nfe] POST {url}", flush=True)
+    resp = requests.post(
+        url,
+        data=soap_bytes,
+        cert=(cert_path, key_path),
+        headers={
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            "SOAPAction": soap_action,
+        },
+        timeout=30,
+    )
+    print(f"[nfe] HTTP {resp.status_code}", flush=True)
+    resp.raise_for_status()
+    return etree.fromstring(resp.content)
+
+
 # ─── Operações da SEFAZ ───────────────────────────────────────────
 
 def consultar_status_servico(uf: str, cert_path: str, key_path: str) -> dict:
@@ -783,20 +836,26 @@ def _classificar_schema(schema: str) -> str:
     return _TIPOS_SCHEMA.get(prefixo, "outro")
 
 
-def distribuir_dfe(cnpj: str, ult_nsu: int, cert_path: str, key_path: str) -> dict:
+def distribuir_dfe(cnpj: str, uf: str, ult_nsu: int, cert_path: str, key_path: str) -> dict:
     """
     Consulta NFeDistribuicaoDFe a partir do NSU informado (0 = do início).
     Devolve até 50 documentos por chamada — repita com o `ultNSU` retornado
     até `tem_mais` vir False pra cobrir tudo.
+
+    `uf`: UF do autor do pedido (o emitente consultando, não o Ambiente
+    Nacional) — cUFAutor é o código IBGE dessa UF, diferente da
+    manifestação do destinatário (que usa cOrgao=91/AN). Confirmado
+    contra a implementação de referência (nfephp-org/sped-nfe).
     """
+    cuf_autor = _UF_IBGE[uf.upper()]
     xml = (f'<distDFeInt versao="1.01" xmlns="{NS}">'
            f'<tpAmb>{_tp_amb()}</tpAmb>'
-           f'<cUFAutor>{_CUF_AN}</cUFAutor>'
+           f'<cUFAutor>{cuf_autor}</cUFAutor>'
            f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
            f'<distNSU><ultNSU>{str(ult_nsu).zfill(15)}</ultNSU></distNSU>'
            f'</distDFeInt>')
     url  = _url_distribuicao_dfe()
-    resp = _enviar_soap(url, "NFeDistribuicaoDFe", _CUF_AN, xml, cert_path, key_path)
+    resp = _enviar_soap_distribuicao(url, xml, cert_path, key_path)
     body = _extrair_body(resp)
     ns   = {"nfe": NS}
     cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
