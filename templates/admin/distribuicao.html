@@ -55,7 +55,7 @@
 <div class="card" style="max-width:900px;margin-top:1rem">
   <div class="card-title">
     Resultado
-    <span style="font-size:.78rem;color:var(--muted);font-weight:normal">
+    <span style="font-size:.78rem;color:var(--muted-fg);font-weight:normal">
       cStat {{ resultado.cStat }} — {{ resultado.xMotivo }}
       · NSU {{ resultado.ultNSU }} de {{ resultado.maxNSU }}
       {% if resultado.tem_mais %} · há mais documentos, clique "Buscar" de novo pra continuar{% endif %}
@@ -74,14 +74,14 @@
       <tbody>
         {% for d in documentos %}
         <tr>
-          <td style="font-size:.72rem;color:var(--muted)">{{ d.nsu }}</td>
+          <td style="font-size:.72rem;color:var(--muted-fg)">{{ d.nsu }}</td>
           <td>{{ d.tipo }}</td>
           <td>{{ d.papel or '—' }}</td>
           <td>{{ d.xNome_emit or '—' }}</td>
           <td>{{ d.dhEmi or '—' }}</td>
           <td>{{ 'R$ %.2f'|format(d.vNF|float) if d.vNF else '—' }}</td>
           <td>{{ d.cSitNFe or '—' }}</td>
-          <td style="font-size:.7rem;color:var(--muted)">{{ d.chave or '—' }}</td>
+          <td style="font-size:.7rem;color:var(--muted-fg)">{{ d.chave or '—' }}</td>
           <td>
             {% if d.tipo == 'resumo' and d.papel == 'destinatario' and d.chave %}
             <form method="POST" style="display:inline">
@@ -100,7 +100,7 @@
     </table>
   </div>
   {% else %}
-    <p style="color:var(--muted);padding:0 1rem 1rem">Nenhum documento novo desde a última busca.</p>
+    <p style="color:var(--muted-fg);padding:0 1rem 1rem">Nenhum documento novo desde a última busca.</p>
   {% endif %}
 </div>
 {% endif %}
