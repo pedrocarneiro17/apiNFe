@@ -196,6 +196,23 @@ def init_db():
                     cliente_id TEXT PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
                     ultimo_nsu BIGINT DEFAULT 0
                 );
+
+                CREATE TABLE IF NOT EXISTS dfe_documentos (
+                    cliente_id      TEXT,
+                    nsu             BIGINT,
+                    chave           TEXT DEFAULT '',
+                    tipo            TEXT DEFAULT '',
+                    papel           TEXT DEFAULT '',
+                    emitente_cnpj   TEXT DEFAULT '',
+                    emitente_nome   TEXT DEFAULT '',
+                    data_emissao    TEXT DEFAULT '',
+                    valor           NUMERIC(14,2) DEFAULT 0,
+                    situacao        TEXT DEFAULT '',
+                    manifestado     BOOLEAN DEFAULT FALSE,
+                    xml_conteudo    TEXT DEFAULT '',
+                    criado_em       TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (cliente_id, nsu)
+                );
             """)
 
     migracoes = [
@@ -208,6 +225,9 @@ def init_db():
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS ref_nfe TEXT DEFAULT ''",
         "ALTER TABLE clientes ADD COLUMN IF NOT EXISTS certificado_pfx BYTEA",
         "ALTER TABLE notas ADD COLUMN IF NOT EXISTS xml_conteudo TEXT",
+        "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'parado'",
+        "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS docs_processados INTEGER DEFAULT 0",
+        "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS erro TEXT DEFAULT ''",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -388,6 +408,91 @@ def salvar_ultimo_nsu_dfe(cliente_id: str, nsu: int):
                    ON CONFLICT (cliente_id) DO UPDATE SET ultimo_nsu = EXCLUDED.ultimo_nsu""",
                 (cliente_id, int(nsu)),
             )
+
+
+def definir_status_sync_dfe(cliente_id: str, status: str, docs_processados: int = 0, erro: str = ""):
+    """Progresso da sincronização em background da Distribuição DFe."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO dfe_nsu_cursor (cliente_id, status, docs_processados, erro)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (cliente_id) DO UPDATE SET
+                       status = EXCLUDED.status,
+                       docs_processados = EXCLUDED.docs_processados,
+                       erro = EXCLUDED.erro""",
+                (cliente_id, status, docs_processados, erro),
+            )
+
+
+def get_status_sync_dfe(cliente_id: str) -> dict:
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                "SELECT status, docs_processados, erro, ultimo_nsu FROM dfe_nsu_cursor WHERE cliente_id = %s",
+                (cliente_id,),
+            )
+            row = _row(cur)
+            return row or {"status": "parado", "docs_processados": 0, "erro": "", "ultimo_nsu": 0}
+
+
+def salvar_dfe_documento(cliente_id: str, doc: dict):
+    """Upsert de um documento da Distribuição DFe — xml_conteudo só é
+    sobrescrito quando o novo valor não vier vazio (não apaga um XML já
+    conquistado por uma manifestação anterior)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO dfe_documentos
+                     (cliente_id, nsu, chave, tipo, papel, emitente_cnpj,
+                      emitente_nome, data_emissao, valor, situacao,
+                      manifestado, xml_conteudo)
+                   VALUES (%(cliente_id)s, %(nsu)s, %(chave)s, %(tipo)s, %(papel)s,
+                           %(emitente_cnpj)s, %(emitente_nome)s, %(data_emissao)s,
+                           %(valor)s, %(situacao)s, %(manifestado)s, %(xml_conteudo)s)
+                   ON CONFLICT (cliente_id, nsu) DO UPDATE SET
+                     chave = EXCLUDED.chave, tipo = EXCLUDED.tipo, papel = EXCLUDED.papel,
+                     emitente_cnpj = EXCLUDED.emitente_cnpj, emitente_nome = EXCLUDED.emitente_nome,
+                     data_emissao = EXCLUDED.data_emissao, valor = EXCLUDED.valor,
+                     situacao = EXCLUDED.situacao, manifestado = EXCLUDED.manifestado,
+                     xml_conteudo = CASE WHEN COALESCE(EXCLUDED.xml_conteudo,'')=''
+                                          THEN dfe_documentos.xml_conteudo
+                                          ELSE EXCLUDED.xml_conteudo END""",
+                {
+                    "cliente_id": cliente_id,
+                    "nsu": int(doc.get("nsu") or 0),
+                    "chave": doc.get("chave", ""),
+                    "tipo": doc.get("tipo", ""),
+                    "papel": doc.get("papel", ""),
+                    "emitente_cnpj": doc.get("cnpj_emit", ""),
+                    "emitente_nome": doc.get("xNome_emit", ""),
+                    "data_emissao": doc.get("dhEmi", ""),
+                    "valor": float(doc.get("vNF") or 0),
+                    "situacao": doc.get("cSitNFe", ""),
+                    "manifestado": bool(doc.get("manifestado", False)),
+                    "xml_conteudo": doc.get("xml_conteudo", ""),
+                },
+            )
+
+
+def marcar_dfe_manifestado(cliente_id: str, chave: str):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE dfe_documentos SET manifestado = TRUE WHERE cliente_id = %s AND chave = %s",
+                (cliente_id, chave),
+            )
+
+
+def listar_dfe_documentos(cliente_id: str, limit: int = 200):
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                """SELECT * FROM dfe_documentos WHERE cliente_id = %s
+                   ORDER BY nsu DESC LIMIT %s""",
+                (cliente_id, limit),
+            )
+            return _rows(cur)
 
 
 # ── Produtos ──────────────────────────────────────────────────────

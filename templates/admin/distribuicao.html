@@ -5,31 +5,25 @@
 {% block page_subtitle %}Consulta direto na SEFAZ as NF-e associadas ao CNPJ do emitente{% endblock %}
 
 {% block content %}
-<div class="card" style="max-width:900px">
+<div class="card" style="max-width:1000px">
   <div class="card-title">Distribuição DFe (NFeDistribuicaoDFe)</div>
-
-  {% if erro %}
-    <div class="alert alert-danger">{{ erro }}</div>
-  {% endif %}
-  {% if aviso %}
-    <div class="alert alert-success">{{ aviso }}</div>
-  {% endif %}
 
   <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;
               padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
     <strong>Só NF-e (modelo 55)</strong> — NFC-e não é coberto por esse
-    serviço da SEFAZ. Notas onde o emitente aqui é o <strong>destinatário</strong>
-    chegam como <strong>resumo</strong> e já são manifestadas
-    automaticamente ("Ciência da Operação" — não confirma nem nega o
-    conteúdo) nesta mesma busca. O XML completo aparece numa busca
-    seguinte, depois da SEFAZ processar essa manifestação. Notas onde ele é
-    o <strong>emitente</strong> já vêm completas, sem precisar manifestar.
+    serviço da SEFAZ. "Sincronizar" busca TODO o histórico disponível,
+    página por página (limite de 50 documentos por vez é da própria SEFAZ),
+    em segundo plano — pode levar minutos ou horas pra um histórico grande.
+    Os documentos vão ficando salvos conforme chegam, então dá pra sair da
+    tela e voltar depois. Notas onde o emitente aqui é <strong>destinatário</strong>
+    são manifestadas automaticamente ("Ciência da Operação") pra destravar o
+    XML completo na sincronização seguinte.
   </div>
 
-  <form method="POST">
+  <form method="GET">
     <div class="form-group">
       <label>Emitente *</label>
-      <select name="cliente_id" required>
+      <select name="cliente_id" required onchange="this.form.submit()">
         <option value="">Selecione o emitente...</option>
         {% for c in clientes %}
           <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>
@@ -38,27 +32,25 @@
         {% endfor %}
       </select>
     </div>
-    <div style="display:flex;gap:.75rem">
-      <button type="submit" name="acao" value="buscar" class="btn btn-primary">
-        <i class="ti ti-search"></i> Buscar
-      </button>
-      <button type="submit" name="acao" value="resetar" class="btn btn-outline"
-              onclick="return confirm('Zerar o cursor de sincronização? A próxima busca recomeça do início.')">
-        <i class="ti ti-refresh"></i> Ressincronizar do zero
-      </button>
-    </div>
   </form>
+
+  {% if cliente_id %}
+  <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+    <button id="btn-sincronizar" class="btn btn-primary" onclick="sincronizar()">
+      <i class="ti ti-refresh"></i> Sincronizar
+    </button>
+    <button class="btn btn-outline" onclick="resetar()">
+      Ressincronizar do zero
+    </button>
+    <span id="status-texto" style="font-size:.82rem;color:var(--muted-fg)"></span>
+  </div>
+  {% endif %}
 </div>
 
-{% if resultado %}
-<div class="card" style="max-width:900px;margin-top:1rem">
+{% if cliente_id %}
+<div class="card" style="max-width:1000px;margin-top:1rem">
   <div class="card-title">
-    Resultado
-    <span style="font-size:.78rem;color:var(--muted-fg);font-weight:normal">
-      cStat {{ resultado.cStat }} — {{ resultado.xMotivo }}
-      · NSU {{ resultado.ultNSU }} de {{ resultado.maxNSU }}
-      {% if resultado.tem_mais %} · há mais documentos, clique "Buscar" de novo pra continuar{% endif %}
-    </span>
+    Documentos ({{ documentos|length }} mostrados{% if documentos|length == 200 %}, últimos 200{% endif %})
   </div>
 
   {% if documentos %}
@@ -76,29 +68,21 @@
           <td style="font-size:.72rem;color:var(--muted-fg)">{{ d.nsu }}</td>
           <td>{{ d.tipo }}</td>
           <td>{{ d.papel or '—' }}</td>
-          <td>{{ d.xNome_emit or '—' }}</td>
-          <td>{{ d.dhEmi or '—' }}</td>
-          <td>{{ 'R$ %.2f'|format(d.vNF|float) if d.vNF else '—' }}</td>
-          <td>{{ d.cSitNFe or '—' }}</td>
+          <td>{{ d.emitente_nome or '—' }}</td>
+          <td>{{ d.data_emissao or '—' }}</td>
+          <td>{{ 'R$ %.2f'|format(d.valor|float) if d.valor else '—' }}</td>
+          <td>{{ d.situacao or '—' }}</td>
           <td style="font-size:.7rem;color:var(--muted-fg)">{{ d.chave or '—' }}</td>
           <td>
             {% if d.tipo == 'resumo' and d.papel == 'destinatario' and d.chave %}
               {% if d.manifestado %}
                 <span style="font-size:.72rem;color:var(--muted-fg)">
-                  Manifestada — XML na próxima busca
+                  Manifestada — XML na próxima sincronização
                 </span>
               {% else %}
-                <form method="POST" style="display:inline">
-                  <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-                  <input type="hidden" name="chave" value="{{ d.chave }}">
-                  <input type="hidden" name="tp_evento" value="210210">
-                  <button type="submit" name="acao" value="manifestar" class="btn btn-outline btn-sm">
-                    Manifestar (Ciência)
-                  </button>
-                </form>
-                {% if d.manifestado_erro %}
-                  <div style="font-size:.68rem;color:var(--danger)">{{ d.manifestado_erro }}</div>
-                {% endif %}
+                <button class="btn btn-outline btn-sm" onclick="manifestar('{{ d.chave }}', this)">
+                  Manifestar (Ciência)
+                </button>
               {% endif %}
             {% endif %}
             {% if d.xml_base64 %}
@@ -114,8 +98,94 @@
     </table>
   </div>
   {% else %}
-    <p style="color:var(--muted-fg);padding:0 1rem 1rem">Nenhum documento novo desde a última busca.</p>
+    <p style="color:var(--muted-fg);padding:0 1rem 1rem">
+      Nenhum documento sincronizado ainda pra esse emitente. Clique "Sincronizar" pra começar.
+    </p>
   {% endif %}
 </div>
 {% endif %}
+
+<script>
+const CLIENTE_ID = {{ cliente_id | tojson | forceescape }};
+
+function statusTexto(s) {
+  const map = {
+    parado: 'Parado.', rodando: 'Sincronizando…',
+    concluido: 'Sincronização concluída.',
+    limite_sefaz: 'SEFAZ pediu pausa — tente de novo mais tarde (não insista, isso reinicia o prazo de espera).',
+    erro: 'Erro na sincronização.',
+  };
+  return map[s] || s;
+}
+
+async function atualizarStatus() {
+  const resp = await fetch('/admin/distribuicao/status?cliente_id=' + encodeURIComponent(CLIENTE_ID));
+  const data = await resp.json();
+  const txt = document.getElementById('status-texto');
+  let msg = statusTexto(data.status) + ' ' + (data.docs_processados || 0) + ' documento(s) processados nesta rodada.';
+  if (data.erro) msg += ' — ' + data.erro;
+  if (txt) txt.textContent = msg;
+  return data.status;
+}
+
+async function pollStatus() {
+  const status = await atualizarStatus();
+  if (status === 'rodando') {
+    setTimeout(pollStatus, 3000);
+  } else {
+    const btn = document.getElementById('btn-sincronizar');
+    if (btn) btn.disabled = false;
+    if (status === 'concluido' || status === 'erro' || status === 'limite_sefaz') {
+      location.reload();
+    }
+  }
+}
+
+async function sincronizar() {
+  const btn = document.getElementById('btn-sincronizar');
+  btn.disabled = true;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  const resp = await fetch('/admin/distribuicao/sincronizar', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    alert('Erro: ' + data.erro);
+    btn.disabled = false;
+    return;
+  }
+  pollStatus();
+}
+
+async function resetar() {
+  if (!confirm('Zerar o cursor de sincronização? A próxima sincronização recomeça do início (os documentos já salvos continuam na lista).')) return;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  await fetch('/admin/distribuicao/resetar', { method: 'POST', body: fd });
+  location.reload();
+}
+
+async function manifestar(chave, btn) {
+  btn.disabled = true;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  fd.append('chave', chave);
+  const resp = await fetch('/admin/distribuicao/manifestar', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    alert('Erro: ' + data.erro);
+    btn.disabled = false;
+    return;
+  }
+  location.reload();
+}
+
+if (CLIENTE_ID) {
+  atualizarStatus().then(status => {
+    if (status === 'rodando') {
+      document.getElementById('btn-sincronizar').disabled = true;
+      pollStatus();
+    }
+  });
+}
+</script>
 {% endblock %}

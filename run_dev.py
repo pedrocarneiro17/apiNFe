@@ -153,7 +153,19 @@ def _init_sqlite():
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS dfe_nsu_cursor (
-                cliente_id TEXT PRIMARY KEY, ultimo_nsu INTEGER DEFAULT 0
+                cliente_id TEXT PRIMARY KEY, ultimo_nsu INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'parado', docs_processados INTEGER DEFAULT 0,
+                erro TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS dfe_documentos (
+                cliente_id TEXT, nsu INTEGER, chave TEXT DEFAULT '',
+                tipo TEXT DEFAULT '', papel TEXT DEFAULT '',
+                emitente_cnpj TEXT DEFAULT '', emitente_nome TEXT DEFAULT '',
+                data_emissao TEXT DEFAULT '', valor REAL DEFAULT 0,
+                situacao TEXT DEFAULT '', manifestado INTEGER DEFAULT 0,
+                xml_conteudo TEXT DEFAULT '',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cliente_id, nsu)
             );
         """)
         conn.commit()
@@ -171,6 +183,9 @@ def _init_sqlite():
             "ALTER TABLE notas ADD COLUMN ref_nfe TEXT DEFAULT ''",
             "ALTER TABLE clientes ADD COLUMN certificado_pfx BLOB",
             "ALTER TABLE notas ADD COLUMN xml_conteudo TEXT",
+            "ALTER TABLE dfe_nsu_cursor ADD COLUMN status TEXT DEFAULT 'parado'",
+            "ALTER TABLE dfe_nsu_cursor ADD COLUMN docs_processados INTEGER DEFAULT 0",
+            "ALTER TABLE dfe_nsu_cursor ADD COLUMN erro TEXT DEFAULT ''",
         ]:
             try:
                 cur.execute(col_sql)

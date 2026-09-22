@@ -713,129 +713,170 @@ def inutilizar_numeracao():
 
 
 # ── Distribuição DFe (buscar notas de um CNPJ direto na SEFAZ) ────────────
+#
+# "Sincronizar" roda em background (mesmo padrão de admin_emitir_nota) — pra
+# um cliente com histórico grande, puxar tudo pode levar de minutos a horas
+# (centenas de chamadas em sequência, respeitando o espaçamento pedido pela
+# SEFAZ). Documentos vão sendo persistidos em dfe_documentos conforme chegam,
+# então sobrevivem a reload de página e a interrupções (retomar é só clicar
+# "Sincronizar" de novo — o cursor de NSU já continua de onde parou).
 
-@app.route("/admin/distribuicao", methods=["GET", "POST"])
+def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
+                            cert_path: str, key_path: str,
+                            chave_privada, certificado, tmp_dir: str):
+    from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe
+    import shutil, time
+
+    total = 0
+    try:
+        while True:
+            ult_nsu = db.get_ultimo_nsu_dfe(cliente_id)
+            resultado = distribuir_dfe(cnpj, uf, ult_nsu, cert_path, key_path)
+
+            if resultado["cStat"] not in ("137", "138"):
+                db.definir_status_sync_dfe(cliente_id, "limite_sefaz", total,
+                                           f"[{resultado['cStat']}] {resultado['xMotivo']}")
+                print(f"[distribuicao] {cliente_id} pausado: {resultado['cStat']} {resultado['xMotivo']}", flush=True)
+                return
+
+            for doc in resultado["documentos"]:
+                item = {"nsu": doc["nsu"], "tipo": doc["tipo"]}
+                if doc["tipo"] in ("resumo", "completa"):
+                    item.update(_parse_resumo_nfe(doc["xml"], cnpj))
+                if doc["tipo"] == "completa":
+                    item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
+
+                if item["tipo"] == "resumo" and item.get("papel") == "destinatario" and item.get("chave"):
+                    try:
+                        res_manif = manifestar_destinatario(
+                            chave=item["chave"], cnpj=cnpj,
+                            cert_path=cert_path, key_path=key_path,
+                            chave_privada=chave_privada, certificado=certificado,
+                            tp_evento="210210",
+                        )
+                        item["manifestado"] = res_manif.get("cStat") == "135"
+                    except Exception:
+                        item["manifestado"] = False
+                    time.sleep(0.5)
+
+                db.salvar_dfe_documento(cliente_id, item)
+                total += 1
+
+            db.salvar_ultimo_nsu_dfe(cliente_id, resultado["ultNSU"])
+            db.definir_status_sync_dfe(cliente_id, "rodando", total)
+            print(f"[distribuicao] {cliente_id} processados={total} "
+                  f"NSU={resultado['ultNSU']}/{resultado['maxNSU']}", flush=True)
+
+            if not resultado["tem_mais"]:
+                db.definir_status_sync_dfe(cliente_id, "concluido", total)
+                return
+            time.sleep(2)  # espaçamento recomendado pela SEFAZ entre chamadas
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        db.definir_status_sync_dfe(cliente_id, "erro", total, str(e))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/admin/distribuicao")
 @_requer_login
 def admin_distribuicao():
+    import base64
     clientes = db.listar_clientes()
+    cliente_id = request.args.get("cliente_id", "")
+    documentos = db.listar_dfe_documentos(cliente_id) if cliente_id else []
+    for d in documentos:
+        if d.get("xml_conteudo"):
+            d["xml_base64"] = base64.b64encode(d["xml_conteudo"].encode("utf-8")).decode("ascii")
+    status_sync = db.get_status_sync_dfe(cliente_id) if cliente_id else None
+    return render_template("admin/distribuicao.html", clientes=clientes,
+                           cliente_id=cliente_id, documentos=documentos,
+                           status_sync=status_sync)
 
-    if request.method == "GET":
-        return render_template("admin/distribuicao.html", clientes=clientes)
 
+@app.route("/admin/distribuicao/status")
+@_requer_login
+def admin_distribuicao_status():
+    cliente_id = request.args.get("cliente_id", "")
+    return jsonify(db.get_status_sync_dfe(cliente_id))
+
+
+@app.route("/admin/distribuicao/sincronizar", methods=["POST"])
+@_requer_login
+def admin_distribuicao_sincronizar():
     cliente_id = request.form.get("cliente_id", "")
-    acao = request.form.get("acao", "buscar")
-
-    cliente = next((c for c in clientes if str(c["id"]) == str(cliente_id)), None)
+    cliente = db.carregar_cliente(cliente_id)
     if not cliente:
-        return render_template("admin/distribuicao.html", clientes=clientes,
-                               erro="Emitente não encontrado.")
+        return jsonify({"erro": "Emitente não encontrado."}), 404
+    if not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente sem certificado digital cadastrado."}), 400
 
-    if acao == "resetar":
-        db.salvar_ultimo_nsu_dfe(cliente_id, 0)
-        return render_template("admin/distribuicao.html", clientes=clientes,
-                               cliente_id=cliente_id,
-                               aviso="Cursor de sincronização zerado — a próxima busca recomeça do início.")
+    status_atual = db.get_status_sync_dfe(cliente_id)
+    if status_atual.get("status") == "rodando":
+        return jsonify({"erro": "Já tem uma sincronização em andamento."}), 400
 
-    if acao == "manifestar":
-        chave = request.form.get("chave", "").strip()
-        tp_evento = request.form.get("tp_evento", "210210")
-        justificativa = request.form.get("justificativa", "").strip()
-        if not cliente.get("caminho_certificado"):
-            return render_template("admin/distribuicao.html", clientes=clientes,
-                                   cliente_id=cliente_id,
-                                   erro="Emitente sem certificado digital cadastrado.")
-        from fluxo_nfe_api import manifestar_destinatario, _pfx_para_pem
-        import shutil
-        caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    from fluxo_nfe_api import _pfx_para_pem
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
         cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
             caminho_pfx, cliente.get("senha_certificado", "")
         )
-        try:
-            resultado_manif = manifestar_destinatario(
-                chave=chave, cnpj=cliente["cnpj"],
-                cert_path=cert_path, key_path=key_path,
-                chave_privada=chave_privada, certificado=certificado,
-                tp_evento=tp_evento, justificativa=justificativa,
-            )
-        except Exception as e:
-            return render_template("admin/distribuicao.html", clientes=clientes,
-                                   cliente_id=cliente_id,
-                                   erro=f"Erro ao manifestar: {e}")
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        if resultado_manif.get("cStat") != "135":
-            return render_template("admin/distribuicao.html", clientes=clientes,
-                                   cliente_id=cliente_id,
-                                   erro=f"Manifestação recusada [{resultado_manif['cStat']}]: {resultado_manif['xMotivo']}")
-        return render_template("admin/distribuicao.html", clientes=clientes,
-                               cliente_id=cliente_id,
-                               aviso=f"Manifestação registrada [{resultado_manif['cStat']}]. "
-                                     f"O XML completo dessa nota aparece numa próxima busca, "
-                                     f"depois da SEFAZ processar.")
-
-    if not cliente.get("caminho_certificado"):
-        return render_template("admin/distribuicao.html", clientes=clientes,
-                               cliente_id=cliente_id,
-                               erro="Emitente sem certificado digital cadastrado.")
-
-    from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe, _pfx_para_pem
-    import base64
-    import shutil
-    import time
-
-    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
-    cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
-        caminho_pfx, cliente.get("senha_certificado", "")
-    )
-    ult_nsu = db.get_ultimo_nsu_dfe(cliente_id)
-    try:
-        resultado = distribuir_dfe(cliente["cnpj"], cliente["uf"], ult_nsu, cert_path, key_path)
     except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    db.definir_status_sync_dfe(cliente_id, "rodando", 0)
+    threading.Thread(
+        target=_sincronizar_dfe_tarefa,
+        args=(cliente_id, cliente["cnpj"], cliente["uf"], cert_path, key_path,
+              chave_privada, certificado, tmp_dir),
+        daemon=True,
+    ).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/admin/distribuicao/resetar", methods=["POST"])
+@_requer_login
+def admin_distribuicao_resetar():
+    cliente_id = request.form.get("cliente_id", "")
+    db.salvar_ultimo_nsu_dfe(cliente_id, 0)
+    db.definir_status_sync_dfe(cliente_id, "parado", 0)
+    return jsonify({"ok": True})
+
+
+@app.route("/admin/distribuicao/manifestar", methods=["POST"])
+@_requer_login
+def admin_distribuicao_manifestar():
+    cliente_id = request.form.get("cliente_id", "")
+    chave = request.form.get("chave", "").strip()
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente or not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
+
+    from fluxo_nfe_api import manifestar_destinatario, _pfx_para_pem
+    import shutil
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    try:
+        resultado = manifestar_destinatario(
+            chave=chave, cnpj=cliente["cnpj"],
+            cert_path=cert_path, key_path=key_path,
+            chave_privada=chave_privada, certificado=certificado,
+            tp_evento="210210",
+        )
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 502
+    finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        return render_template("admin/distribuicao.html", clientes=clientes,
-                               cliente_id=cliente_id,
-                               erro=f"Erro ao consultar SEFAZ: {e}")
 
-    if resultado["ultNSU"] > ult_nsu:
-        db.salvar_ultimo_nsu_dfe(cliente_id, resultado["ultNSU"])
-
-    documentos = []
-    for doc in resultado["documentos"]:
-        item = {"nsu": doc["nsu"], "tipo": doc["tipo"], "schema": doc["schema"]}
-        if doc["tipo"] in ("resumo", "completa"):
-            item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
-        if doc["tipo"] == "completa":
-            item["xml_base64"] = base64.b64encode(doc["xml"]).decode("ascii")
-        documentos.append(item)
-
-    # Manifesta automaticamente (Ciência da Operação) toda nota tomada que
-    # ainda veio como resumo — não confirma nem nega a operação, só destrava
-    # o XML completo numa busca seguinte. Não interfere no cursor de NSU;
-    # sequencial e com pausa entre chamadas pra não sobrecarregar o mesmo
-    # webservice de eventos.
-    for item in documentos:
-        if item["tipo"] == "resumo" and item.get("papel") == "destinatario" and item.get("chave"):
-            try:
-                res_manif = manifestar_destinatario(
-                    chave=item["chave"], cnpj=cliente["cnpj"],
-                    cert_path=cert_path, key_path=key_path,
-                    chave_privada=chave_privada, certificado=certificado,
-                    tp_evento="210210",
-                )
-                item["manifestado"] = res_manif.get("cStat") == "135"
-                if not item["manifestado"]:
-                    item["manifestado_erro"] = f"[{res_manif.get('cStat')}] {res_manif.get('xMotivo')}"
-            except Exception as e:
-                item["manifestado"] = False
-                item["manifestado_erro"] = str(e)
-            time.sleep(0.5)
-
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    return render_template("admin/distribuicao.html", clientes=clientes,
-                           cliente_id=cliente_id, resultado=resultado,
-                           documentos=documentos)
+    if resultado.get("cStat") != "135":
+        return jsonify({"erro": f"[{resultado['cStat']}] {resultado['xMotivo']}"}), 502
+    db.marcar_dfe_manifestado(cliente_id, chave)
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
