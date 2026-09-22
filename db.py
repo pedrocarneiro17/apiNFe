@@ -518,6 +518,24 @@ def listar_dfe_documentos(cliente_id: str, limit: int = 200, offset: int = 0):
     return combinados[offset:offset + limit], len(combinados)
 
 
+def xmls_dfe_documentos(cliente_id: str, papel: str = None):
+    """[(chave, xml_conteudo)] de todo documento já completo (com XML) desse
+    emitente — pra download em lote (ZIP). Só tipo='completa' tem XML."""
+    filtros = ["cliente_id = %s", "tipo = 'completa'", "xml_conteudo <> ''"]
+    params = [cliente_id]
+    if papel:
+        filtros.append("papel = %s")
+        params.append(papel)
+    where = " AND ".join(filtros)
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT chave, xml_conteudo FROM dfe_documentos WHERE {where} ORDER BY nsu",
+                params,
+            )
+            return cur.fetchall()
+
+
 # ── Produtos ──────────────────────────────────────────────────────
 
 def listar_produtos():

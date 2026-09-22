@@ -885,6 +885,26 @@ def admin_distribuicao_manifestar():
     return jsonify({"ok": True})
 
 
+@app.route("/admin/distribuicao/baixar-lote")
+@_requer_login
+def admin_distribuicao_baixar_lote():
+    """ZIP com os XMLs completos já sincronizados desse emitente."""
+    import io, zipfile
+    cliente_id = request.args.get("cliente_id", "")
+    papel = request.args.get("papel") or None
+    linhas = db.xmls_dfe_documentos(cliente_id, papel=papel)
+    if not linhas:
+        return "Nenhum XML completo sincronizado ainda pra esse emitente/filtro.", 404
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for chave, xml_conteudo in linhas:
+            zf.writestr(f"NFe{chave}.xml", xml_conteudo or "")
+    buf.seek(0)
+    nome_arquivo = f"notas_{cliente_id}{('_' + papel) if papel else ''}.zip"
+    return Response(buf.getvalue(), mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
+
+
 if __name__ == "__main__":
     print("Acesse: http://localhost:5000/admin/notas")
     app.run(debug=False, port=5000)
