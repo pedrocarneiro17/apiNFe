@@ -484,7 +484,9 @@ def marcar_dfe_manifestado(cliente_id: str, chave: str):
             )
 
 
-def listar_dfe_documentos(cliente_id: str, limit: int = 200):
+def listar_dfe_documentos(cliente_id: str, limit: int = 200, offset: int = 0):
+    """Devolve (pagina, total) — já deduplicado por chave. `total` é depois
+    da deduplicação, pra bater com o que a paginação da tela mostra."""
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute(
@@ -513,7 +515,7 @@ def listar_dfe_documentos(cliente_id: str, limit: int = 200):
 
     combinados = list(melhor_por_chave.values()) + outros
     combinados.sort(key=lambda r: r["nsu"], reverse=True)
-    return combinados[:limit]
+    return combinados[offset:offset + limit], len(combinados)
 
 
 # ── Produtos ──────────────────────────────────────────────────────

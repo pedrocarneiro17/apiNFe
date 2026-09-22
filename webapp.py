@@ -785,14 +785,20 @@ def admin_distribuicao():
     import base64
     clientes = db.listar_clientes()
     cliente_id = request.args.get("cliente_id", "")
-    documentos = db.listar_dfe_documentos(cliente_id) if cliente_id else []
+    limit = 200
+    offset = max(0, int(request.args.get("offset", 0) or 0))
+    if cliente_id:
+        documentos, total_documentos = db.listar_dfe_documentos(cliente_id, limit=limit, offset=offset)
+    else:
+        documentos, total_documentos = [], 0
     for d in documentos:
         if d.get("xml_conteudo"):
             d["xml_base64"] = base64.b64encode(d["xml_conteudo"].encode("utf-8")).decode("ascii")
     status_sync = db.get_status_sync_dfe(cliente_id) if cliente_id else None
     return render_template("admin/distribuicao.html", clientes=clientes,
                            cliente_id=cliente_id, documentos=documentos,
-                           status_sync=status_sync)
+                           status_sync=status_sync, offset=offset, limit=limit,
+                           total_documentos=total_documentos)
 
 
 @app.route("/admin/distribuicao/status")

@@ -50,7 +50,14 @@
 {% if cliente_id %}
 <div class="card" style="max-width:1000px;margin-top:1rem">
   <div class="card-title">
-    Documentos ({{ documentos|length }} mostrados{% if documentos|length == 200 %}, últimos 200{% endif %})
+    Documentos
+    <span style="font-size:.78rem;color:var(--muted-fg);font-weight:normal">
+      {% if total_documentos %}
+        mostrando {{ offset + 1 }}–{{ offset + documentos|length }} de {{ total_documentos }}
+      {% else %}
+        nenhum documento ainda
+      {% endif %}
+    </span>
   </div>
 
   {% if documentos %}
@@ -96,6 +103,18 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+  <div style="display:flex;gap:.75rem;padding:.85rem 1rem">
+    {% if offset > 0 %}
+      <a class="btn btn-outline btn-sm" href="?cliente_id={{ cliente_id }}&offset={{ [offset - limit, 0]|max }}">
+        ← Anterior
+      </a>
+    {% endif %}
+    {% if offset + documentos|length < total_documentos %}
+      <a class="btn btn-outline btn-sm" href="?cliente_id={{ cliente_id }}&offset={{ offset + limit }}">
+        Próximos {{ limit }} →
+      </a>
+    {% endif %}
   </div>
   {% else %}
     <p style="color:var(--muted-fg);padding:0 1rem 1rem">
