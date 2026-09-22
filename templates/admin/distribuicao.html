@@ -93,6 +93,12 @@
               </button>
             </form>
             {% endif %}
+            {% if d.xml_base64 %}
+            <a href="data:application/xml;base64,{{ d.xml_base64 }}"
+               download="NFe{{ d.chave }}.xml" class="btn btn-outline btn-sm">
+              Baixar XML
+            </a>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}

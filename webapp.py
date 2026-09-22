@@ -799,11 +799,14 @@ def admin_distribuicao():
     if resultado["ultNSU"] > ult_nsu:
         db.salvar_ultimo_nsu_dfe(cliente_id, resultado["ultNSU"])
 
+    import base64
     documentos = []
     for doc in resultado["documentos"]:
         item = {"nsu": doc["nsu"], "tipo": doc["tipo"], "schema": doc["schema"]}
         if doc["tipo"] in ("resumo", "completa"):
             item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        if doc["tipo"] == "completa":
+            item["xml_base64"] = base64.b64encode(doc["xml"]).decode("ascii")
         documentos.append(item)
 
     return render_template("admin/distribuicao.html", clientes=clientes,
