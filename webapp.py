@@ -779,8 +779,10 @@ def admin_distribuicao():
                                cliente_id=cliente_id,
                                erro="Emitente sem certificado digital cadastrado.")
 
-    from fluxo_nfe_api import distribuir_dfe, _parse_resumo_nfe, _pfx_para_pem
+    from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe, _pfx_para_pem
+    import base64
     import shutil
+    import time
 
     caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
     cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
@@ -790,16 +792,14 @@ def admin_distribuicao():
     try:
         resultado = distribuir_dfe(cliente["cnpj"], cliente["uf"], ult_nsu, cert_path, key_path)
     except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return render_template("admin/distribuicao.html", clientes=clientes,
                                cliente_id=cliente_id,
                                erro=f"Erro ao consultar SEFAZ: {e}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if resultado["ultNSU"] > ult_nsu:
         db.salvar_ultimo_nsu_dfe(cliente_id, resultado["ultNSU"])
 
-    import base64
     documentos = []
     for doc in resultado["documentos"]:
         item = {"nsu": doc["nsu"], "tipo": doc["tipo"], "schema": doc["schema"]}
@@ -808,6 +808,30 @@ def admin_distribuicao():
         if doc["tipo"] == "completa":
             item["xml_base64"] = base64.b64encode(doc["xml"]).decode("ascii")
         documentos.append(item)
+
+    # Manifesta automaticamente (Ciência da Operação) toda nota tomada que
+    # ainda veio como resumo — não confirma nem nega a operação, só destrava
+    # o XML completo numa busca seguinte. Não interfere no cursor de NSU;
+    # sequencial e com pausa entre chamadas pra não sobrecarregar o mesmo
+    # webservice de eventos.
+    for item in documentos:
+        if item["tipo"] == "resumo" and item.get("papel") == "destinatario" and item.get("chave"):
+            try:
+                res_manif = manifestar_destinatario(
+                    chave=item["chave"], cnpj=cliente["cnpj"],
+                    cert_path=cert_path, key_path=key_path,
+                    chave_privada=chave_privada, certificado=certificado,
+                    tp_evento="210210",
+                )
+                item["manifestado"] = res_manif.get("cStat") == "135"
+                if not item["manifestado"]:
+                    item["manifestado_erro"] = f"[{res_manif.get('cStat')}] {res_manif.get('xMotivo')}"
+            except Exception as e:
+                item["manifestado"] = False
+                item["manifestado_erro"] = str(e)
+            time.sleep(0.5)
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return render_template("admin/distribuicao.html", clientes=clientes,
                            cliente_id=cliente_id, resultado=resultado,

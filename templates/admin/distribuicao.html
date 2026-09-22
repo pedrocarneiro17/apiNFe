@@ -19,12 +19,11 @@
               padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
     <strong>Só NF-e (modelo 55)</strong> — NFC-e não é coberto por esse
     serviço da SEFAZ. Notas onde o emitente aqui é o <strong>destinatário</strong>
-    aparecem só como <strong>resumo</strong> (chave, emitente, valor, data,
-    situação) até fazer a <strong>manifestação do destinatário</strong> —
-    clique "Manifestar" na linha da nota (registra "Ciência da Operação",
-    não confirma nem nega o conteúdo). O XML completo aparece numa busca
-    seguinte, depois da SEFAZ processar. Notas onde ele é o
-    <strong>emitente</strong> já vêm completas, sem precisar manifestar.
+    chegam como <strong>resumo</strong> e já são manifestadas
+    automaticamente ("Ciência da Operação" — não confirma nem nega o
+    conteúdo) nesta mesma busca. O XML completo aparece numa busca
+    seguinte, depois da SEFAZ processar essa manifestação. Notas onde ele é
+    o <strong>emitente</strong> já vêm completas, sem precisar manifestar.
   </div>
 
   <form method="POST">
@@ -84,14 +83,23 @@
           <td style="font-size:.7rem;color:var(--muted-fg)">{{ d.chave or '—' }}</td>
           <td>
             {% if d.tipo == 'resumo' and d.papel == 'destinatario' and d.chave %}
-            <form method="POST" style="display:inline">
-              <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
-              <input type="hidden" name="chave" value="{{ d.chave }}">
-              <input type="hidden" name="tp_evento" value="210210">
-              <button type="submit" name="acao" value="manifestar" class="btn btn-outline btn-sm">
-                Manifestar (Ciência)
-              </button>
-            </form>
+              {% if d.manifestado %}
+                <span style="font-size:.72rem;color:var(--muted-fg)">
+                  Manifestada — XML na próxima busca
+                </span>
+              {% else %}
+                <form method="POST" style="display:inline">
+                  <input type="hidden" name="cliente_id" value="{{ cliente_id }}">
+                  <input type="hidden" name="chave" value="{{ d.chave }}">
+                  <input type="hidden" name="tp_evento" value="210210">
+                  <button type="submit" name="acao" value="manifestar" class="btn btn-outline btn-sm">
+                    Manifestar (Ciência)
+                  </button>
+                </form>
+                {% if d.manifestado_erro %}
+                  <div style="font-size:.68rem;color:var(--danger)">{{ d.manifestado_erro }}</div>
+                {% endif %}
+              {% endif %}
             {% endif %}
             {% if d.xml_base64 %}
             <a href="data:application/xml;base64,{{ d.xml_base64 }}"
