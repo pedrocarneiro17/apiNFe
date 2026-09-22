@@ -488,11 +488,32 @@ def listar_dfe_documentos(cliente_id: str, limit: int = 200):
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute(
-                """SELECT * FROM dfe_documentos WHERE cliente_id = %s
-                   ORDER BY nsu DESC LIMIT %s""",
-                (cliente_id, limit),
+                "SELECT * FROM dfe_documentos WHERE cliente_id = %s ORDER BY nsu DESC",
+                (cliente_id,),
             )
-            return _rows(cur)
+            rows = _rows(cur)
+
+    # A mesma NF-e pode aparecer duas vezes: uma como "resumo" (antes de
+    # manifestar) e outra como "completa" (depois) — a manifestação faz a
+    # SEFAZ gerar uma entrada NOVA na distribuição (NSU diferente) em vez de
+    # atualizar a antiga, então viram duas linhas da mesma nota. Mantém só a
+    # versão mais completa por chave; eventos (sem essa dualidade) passam
+    # direto.
+    ordem_tipo = {"completa": 2, "resumo": 1}
+    melhor_por_chave = {}
+    outros = []
+    for r in rows:
+        if r.get("tipo") not in ordem_tipo or not r.get("chave"):
+            outros.append(r)
+            continue
+        chave = r["chave"]
+        atual = melhor_por_chave.get(chave)
+        if atual is None or ordem_tipo[r["tipo"]] > ordem_tipo[atual["tipo"]]:
+            melhor_por_chave[chave] = r
+
+    combinados = list(melhor_por_chave.values()) + outros
+    combinados.sort(key=lambda r: r["nsu"], reverse=True)
+    return combinados[:limit]
 
 
 # ── Produtos ──────────────────────────────────────────────────────
