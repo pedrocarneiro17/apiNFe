@@ -961,6 +961,48 @@ def _parse_resumo_nfe(xml_bytes: bytes, cnpj_consultado: str) -> dict:
     }
 
 
+_DESC_EVENTOS = {
+    "110110": "Carta de Correção",
+    "110111": "Cancelamento",
+    "110112": "Cancelamento por Substituição",
+    "210200": "Confirmação da Operação",
+    "210210": "Ciência da Operação",
+    "210220": "Desconhecimento da Operação",
+    "210240": "Operação não Realizada",
+}
+
+
+def _parse_resumo_evento(xml_bytes: bytes) -> dict:
+    """
+    Extrai os campos exibíveis de um resEvento (evento resumido) — cancelamento,
+    carta de correção, manifestação do destinatário etc, associados a uma NF-e
+    já existente na distribuição. Schema confirmado (chNFe/tpEvento/xEvento/
+    dhEvento/CNPJ/nProt) contra referências públicas do leiaute NFe.
+    """
+    try:
+        root = etree.fromstring(xml_bytes)
+    except Exception:
+        return {}
+    ns = {"nfe": NS}
+
+    def t(*tags):
+        return root.findtext(".//nfe:" + "/nfe:".join(tags), namespaces=ns) or ""
+
+    ch_nfe   = t("chNFe")
+    tp_ev    = t("tpEvento")
+    dh_ev    = t("dhEvento")
+    x_ev     = t("xEvento")
+    cnpj_aut = t("CNPJ") or t("CPF")
+
+    return {
+        "chave": ch_nfe,
+        "dhEmi": dh_ev[:10] if dh_ev else "",
+        "xNome_emit": x_ev or _DESC_EVENTOS.get(tp_ev, f"Evento {tp_ev}" if tp_ev else ""),
+        "cnpj_emit": cnpj_aut,
+        "papel": "evento",
+    }
+
+
 def _autorizar(nfe_element: etree._Element, uf: str, cuf: int,
                cert_path: str, key_path: str) -> etree._Element:
     """Envia enviNFe com indSinc=1 (síncrono) e retorna corpo da resposta."""

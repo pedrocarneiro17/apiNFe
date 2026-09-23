@@ -724,7 +724,7 @@ def inutilizar_numeracao():
 def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
                             cert_path: str, key_path: str,
                             chave_privada, certificado, tmp_dir: str):
-    from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe
+    from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe, _parse_resumo_evento
     import shutil, time
 
     def _retentar_manifestacoes_pendentes():
@@ -766,6 +766,8 @@ def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
                 item = {"nsu": doc["nsu"], "tipo": doc["tipo"]}
                 if doc["tipo"] in ("resumo", "completa"):
                     item.update(_parse_resumo_nfe(doc["xml"], cnpj))
+                elif doc["tipo"] in ("evento_resumo", "evento_completo"):
+                    item.update(_parse_resumo_evento(doc["xml"]))
                 if doc["tipo"] == "completa":
                     item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
 
@@ -925,7 +927,7 @@ def admin_distribuicao_verificar_chave():
     if not cliente or not cliente.get("caminho_certificado"):
         return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
 
-    from fluxo_nfe_api import consultar_dfe_por_chave, _parse_resumo_nfe, _pfx_para_pem
+    from fluxo_nfe_api import consultar_dfe_por_chave, _parse_resumo_nfe, _parse_resumo_evento, _pfx_para_pem
     import shutil
     caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
     try:
@@ -946,6 +948,8 @@ def admin_distribuicao_verificar_chave():
         item = {"tipo": doc["tipo"], "schema": doc["schema"], "nsu": doc["nsu"]}
         if doc["tipo"] in ("resumo", "completa"):
             item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        elif doc["tipo"] in ("evento_resumo", "evento_completo"):
+            item.update(_parse_resumo_evento(doc["xml"]))
         docs.append(item)
 
     return jsonify({
