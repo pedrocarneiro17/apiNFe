@@ -234,10 +234,11 @@ async function verificarChave() {
     out.style.color = '#b91c1c';
     return;
   }
+  const consultadoComo = `Consultado como CNPJ ${data.cnpj_consultado} (${data.razao_social_consultada}).`;
   if (!data.documentos.length) {
-    out.textContent = `SEFAZ não tem essa chave na caixa de distribuição desse CNPJ agora ` +
+    out.innerHTML = `SEFAZ não tem essa chave na caixa de distribuição desse CNPJ agora ` +
       `(cStat ${data.cStat}: ${data.xMotivo}). Se a nota é antiga, pode já ter saído da janela ` +
-      `de 90 dias de retenção da Distribuição DFe.`;
+      `de 90 dias de retenção da Distribuição DFe.<br><span style="color:var(--muted-fg)">${consultadoComo}</span>`;
     out.style.color = '#b91c1c';
     return;
   }
@@ -252,7 +253,8 @@ async function verificarChave() {
     }
     return `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — data: ${d.dhEmi || '—'} — valor: ${d.vNF || '—'}${obs}`;
   }).join('<br>');
-  out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}`;
+  out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}` +
+    `<br><span style="color:var(--muted-fg)">${consultadoComo}</span>`;
   out.style.color = '#15803d';
 }
 

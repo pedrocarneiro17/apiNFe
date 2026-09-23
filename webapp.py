@@ -955,6 +955,7 @@ def admin_distribuicao_verificar_chave():
     return jsonify({
         "ok": True, "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
         "documentos": docs, "cursor_nsu": db.get_ultimo_nsu_dfe(cliente_id),
+        "cnpj_consultado": cliente["cnpj"], "razao_social_consultada": cliente.get("razao_social", ""),
     })
 
 
