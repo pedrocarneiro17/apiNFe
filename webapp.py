@@ -727,6 +727,28 @@ def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
     from fluxo_nfe_api import distribuir_dfe, manifestar_destinatario, _parse_resumo_nfe
     import shutil, time
 
+    def _retentar_manifestacoes_pendentes():
+        """Tenta de novo a manifestação de qualquer nota que ficou como
+        resumo/destinatário sem manifestar — seja porque a tentativa
+        automática falhou numa rodada anterior, seja desta mesma rodada.
+        Roda em toda sincronização, sem precisar zerar o NSU."""
+        pendentes = db.listar_dfe_pendentes_manifestacao(cliente_id)
+        for chave in pendentes:
+            try:
+                res_manif = manifestar_destinatario(
+                    chave=chave, cnpj=cnpj,
+                    cert_path=cert_path, key_path=key_path,
+                    chave_privada=chave_privada, certificado=certificado,
+                    tp_evento="210210",
+                )
+                if res_manif.get("cStat") == "135":
+                    db.marcar_dfe_manifestado(cliente_id, chave)
+            except Exception as e:
+                print(f"[distribuicao] {cliente_id} falha ao manifestar {chave}: {e}", flush=True)
+            time.sleep(0.5)
+        if pendentes:
+            print(f"[distribuicao] {cliente_id} manifestação retentada em {len(pendentes)} nota(s)", flush=True)
+
     total = 0
     try:
         while True:
@@ -734,6 +756,7 @@ def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
             resultado = distribuir_dfe(cnpj, uf, ult_nsu, cert_path, key_path)
 
             if resultado["cStat"] not in ("137", "138"):
+                _retentar_manifestacoes_pendentes()
                 db.definir_status_sync_dfe(cliente_id, "limite_sefaz", total,
                                            f"[{resultado['cStat']}] {resultado['xMotivo']}")
                 print(f"[distribuicao] {cliente_id} pausado: {resultado['cStat']} {resultado['xMotivo']}", flush=True)
@@ -768,6 +791,7 @@ def _sincronizar_dfe_tarefa(cliente_id: str, cnpj: str, uf: str,
                   f"NSU={resultado['ultNSU']}/{resultado['maxNSU']}", flush=True)
 
             if not resultado["tem_mais"]:
+                _retentar_manifestacoes_pendentes()
                 db.definir_status_sync_dfe(cliente_id, "concluido", total)
                 return
             time.sleep(2)  # espaçamento recomendado pela SEFAZ entre chamadas

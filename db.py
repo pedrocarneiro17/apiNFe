@@ -494,6 +494,22 @@ def marcar_dfe_manifestado(cliente_id: str, chave: str):
             )
 
 
+def listar_dfe_pendentes_manifestacao(cliente_id: str) -> list:
+    """Chaves de notas recebidas (resumo/destinatario) que ainda não foram
+    manifestadas — seja porque a manifestação automática na sincronização
+    falhou, seja porque ficaram de fora da janela que foi processada."""
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                """SELECT DISTINCT chave FROM dfe_documentos
+                   WHERE cliente_id = %s AND tipo = 'resumo'
+                     AND papel = 'destinatario' AND manifestado = FALSE
+                     AND chave <> ''""",
+                (cliente_id,),
+            )
+            return [r["chave"] for r in _rows(cur)]
+
+
 def listar_dfe_documentos(cliente_id: str, limit: int = 200, offset: int = 0):
     """Devolve (pagina, total) — já deduplicado por chave. `total` é depois
     da deduplicação, pra bater com o que a paginação da tela mostra."""
