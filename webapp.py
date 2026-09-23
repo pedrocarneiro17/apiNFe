@@ -1020,6 +1020,74 @@ def admin_distribuicao_importar_chave():
     return jsonify({"ok": True})
 
 
+@app.route("/admin/distribuicao/verificar-nsu", methods=["POST"])
+@_requer_login
+def admin_distribuicao_verificar_nsu():
+    """Consulta um NSU específico direto na SEFAZ (modo consNSU) e salva o
+    que vier — tanto pra investigar 'gaps' na fila (sem precisar já saber
+    a chave) quanto pra reprocessar um NSU já salvo com um parser mais
+    novo (ex: eventos que ficaram em branco antes do parse de resEvento)."""
+    cliente_id = request.form.get("cliente_id", "")
+    nsu_raw = request.form.get("nsu", "").strip()
+    if not nsu_raw.isdigit():
+        return jsonify({"erro": "NSU precisa ser um número."}), 400
+    nsu = int(nsu_raw)
+
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente or not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
+
+    from fluxo_nfe_api import (consultar_dfe_por_nsu, manifestar_destinatario,
+                               _parse_resumo_nfe, _parse_resumo_evento, _pfx_para_pem)
+    import shutil
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    try:
+        resultado = consultar_dfe_por_nsu(nsu, cliente["cnpj"], cliente["uf"], cert_path, key_path)
+        doc = next(iter(resultado["documentos"]), None)
+        if not doc:
+            return jsonify({
+                "ok": True, "encontrado": False,
+                "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
+            })
+
+        item = {"nsu": nsu, "tipo": doc["tipo"]}
+        if doc["tipo"] in ("resumo", "completa"):
+            item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        elif doc["tipo"] in ("evento_resumo", "evento_completo"):
+            item.update(_parse_resumo_evento(doc["xml"]))
+        if doc["tipo"] == "completa":
+            item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
+
+        if item["tipo"] == "resumo" and item.get("papel") == "destinatario" and item.get("chave"):
+            try:
+                res_manif = manifestar_destinatario(
+                    chave=item["chave"], cnpj=cliente["cnpj"],
+                    cert_path=cert_path, key_path=key_path,
+                    chave_privada=chave_privada, certificado=certificado,
+                    tp_evento="210210",
+                )
+                item["manifestado"] = res_manif.get("cStat") == "135"
+            except Exception:
+                item["manifestado"] = False
+
+        db.salvar_dfe_documento(cliente_id, item)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 502
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return jsonify({
+        "ok": True, "encontrado": True, "tipo": item["tipo"],
+        "chave": item.get("chave", ""), "descricao": item.get("xNome_emit", ""),
+    })
+
+
 @app.route("/admin/distribuicao/baixar-lote")
 @_requer_login
 def admin_distribuicao_baixar_lote():

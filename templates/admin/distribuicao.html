@@ -59,6 +59,19 @@
     </div>
     <div id="resultado-chave" style="font-size:.82rem;margin-top:.5rem"></div>
   </div>
+
+  <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border,#e5e7eb)">
+    <label style="font-size:.8rem;color:var(--muted-fg)">
+      Consultar/reprocessar um NSU específico (sem precisar saber a chave — útil pra
+      investigar "buracos" na fila, ou pra atualizar um item antigo já salvo)
+    </label>
+    <div style="display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap">
+      <input id="nsu-verificar" type="number" placeholder="Número do NSU"
+             style="flex:1;min-width:200px;padding:.5rem;border:1px solid #cbd5e1;border-radius:6px">
+      <button class="btn btn-outline btn-sm" onclick="verificarNsu()">Consultar</button>
+    </div>
+    <div id="resultado-nsu" style="font-size:.82rem;margin-top:.5rem"></div>
+  </div>
   {% endif %}
 </div>
 
@@ -275,6 +288,39 @@ async function importarChave(chave, btn) {
     return;
   }
   location.reload();
+}
+
+async function verificarNsu() {
+  const input = document.getElementById('nsu-verificar');
+  const out = document.getElementById('resultado-nsu');
+  const nsu = input.value.trim();
+  if (!nsu || !/^\d+$/.test(nsu)) {
+    out.textContent = 'Informe um número de NSU válido.';
+    out.style.color = '#b91c1c';
+    return;
+  }
+  out.textContent = 'Consultando na SEFAZ...';
+  out.style.color = 'var(--muted-fg)';
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  fd.append('nsu', nsu);
+  const resp = await fetch('/admin/distribuicao/verificar-nsu', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    out.textContent = 'Erro: ' + data.erro;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  if (!data.encontrado) {
+    out.textContent = `NSU ${nsu}: nada retornado (cStat ${data.cStat}: ${data.xMotivo}).`;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  out.textContent = `NSU ${nsu} salvo/atualizado — tipo: ${data.tipo}` +
+    (data.chave ? `, chave: ${data.chave}` : '') +
+    (data.descricao ? `, descrição: ${data.descricao}` : '') +
+    '. Recarregue a página pra ver na lista.';
+  out.style.color = '#15803d';
 }
 
 if (CLIENTE_ID) {

@@ -923,6 +923,34 @@ def consultar_dfe_por_chave(chave: str, cnpj: str, uf: str, cert_path: str, key_
     return {"cStat": cstat, "xMotivo": xmot, "documentos": documentos}
 
 
+def consultar_dfe_por_nsu(nsu: int, cnpj: str, uf: str, cert_path: str, key_path: str) -> dict:
+    """
+    Consulta NFeDistribuicaoDFe por um NSU específico (modo `consNSU`) — em
+    vez de andar sequencialmente com `distNSU`, pergunta direto "o que tem
+    nesse número exato?". Usado tanto pra reprocessar um NSU já salvo (ex:
+    um evento que ficou sem o parse decodificado) quanto pra investigar
+    'gaps' na distribuição — falha documentada pela própria SEFAZ onde um
+    documento não recebe lugar na fila sequencial mesmo existindo (Nota
+    Técnica 2014.002). Confirmado contra a implementação de referência
+    (nfephp-org/sped-nfe, método sefazDistDFe com $numNSU).
+    """
+    cuf_autor = _UF_IBGE[uf.upper()]
+    xml = (f'<distDFeInt versao="1.01" xmlns="{NS}">'
+           f'<tpAmb>{_tp_amb()}</tpAmb>'
+           f'<cUFAutor>{cuf_autor}</cUFAutor>'
+           f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
+           f'<consNSU><NSU>{str(int(nsu)).zfill(15)}</NSU></consNSU>'
+           f'</distDFeInt>')
+    body = _consultar_dist_dfe(xml, cert_path, key_path)
+    ns   = {"nfe": NS}
+    cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    documentos = _extrair_docs_zip(body)
+
+    print(f"[nfe] Distribuição DFe (por NSU {nsu}): cStat={cstat} | docs={len(documentos)}", flush=True)
+    return {"cStat": cstat, "xMotivo": xmot, "documentos": documentos}
+
+
 def _parse_resumo_nfe(xml_bytes: bytes, cnpj_consultado: str) -> dict:
     """
     Extrai os campos exibíveis de um resNFe (resumo) ou procNFe (completa).
