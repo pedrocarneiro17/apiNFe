@@ -959,6 +959,67 @@ def admin_distribuicao_verificar_chave():
     })
 
 
+@app.route("/admin/distribuicao/importar-chave", methods=["POST"])
+@_requer_login
+def admin_distribuicao_importar_chave():
+    """Salva na lista uma nota achada via 'Verificar chave' mas que o feed
+    de NSU normal não trouxe (inconsistência do lado da SEFAZ entre o
+    consChNFe e o distNSU). Como não veio pelo feed, não tem um NSU real
+    pra usar como identificador — usa um NSU sintético (negativo,
+    derivado da própria chave) só pra ter uma chave primária estável e
+    não colidir com NSUs reais da SEFAZ (sempre positivos)."""
+    import hashlib
+    cliente_id = request.form.get("cliente_id", "")
+    chave = request.form.get("chave", "").strip()
+    if not chave or len(_so_numeros(chave)) != 44:
+        return jsonify({"erro": "Chave de acesso inválida (precisa ter 44 dígitos)."}), 400
+
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente or not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
+
+    from fluxo_nfe_api import consultar_dfe_por_chave, manifestar_destinatario, _parse_resumo_nfe, _pfx_para_pem
+    import shutil
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    try:
+        resultado = consultar_dfe_por_chave(chave, cliente["cnpj"], cliente["uf"], cert_path, key_path)
+        doc = next((d for d in resultado["documentos"] if d["tipo"] in ("resumo", "completa")), None)
+        if not doc:
+            return jsonify({"erro": f"SEFAZ não retornou essa nota agora [{resultado['cStat']}] {resultado['xMotivo']}."}), 404
+
+        nsu_sintetico = -int(hashlib.sha1(chave.encode()).hexdigest()[:12], 16)
+        item = {"nsu": nsu_sintetico, "tipo": doc["tipo"]}
+        item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        if doc["tipo"] == "completa":
+            item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
+
+        if item["tipo"] == "resumo" and item.get("papel") == "destinatario" and item.get("chave"):
+            try:
+                res_manif = manifestar_destinatario(
+                    chave=item["chave"], cnpj=cliente["cnpj"],
+                    cert_path=cert_path, key_path=key_path,
+                    chave_privada=chave_privada, certificado=certificado,
+                    tp_evento="210210",
+                )
+                item["manifestado"] = res_manif.get("cStat") == "135"
+            except Exception:
+                item["manifestado"] = False
+
+        db.salvar_dfe_documento(cliente_id, item)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 502
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return jsonify({"ok": True})
+
+
 @app.route("/admin/distribuicao/baixar-lote")
 @_requer_login
 def admin_distribuicao_baixar_lote():

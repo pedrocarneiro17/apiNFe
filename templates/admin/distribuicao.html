@@ -253,9 +253,28 @@ async function verificarChave() {
     }
     return `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — data: ${d.dhEmi || '—'} — valor: ${d.vNF || '—'}${obs}`;
   }).join('<br>');
-  out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}` +
+  const temNota = data.documentos.some(d => d.tipo === 'resumo' || d.tipo === 'completa');
+  const botaoAdicionar = temNota
+    ? ` <button class="btn btn-outline btn-sm" onclick="importarChave('${chave}', this)">Adicionar essa nota na lista</button>`
+    : '';
+  out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}${botaoAdicionar}` +
     `<br><span style="color:var(--muted-fg)">${consultadoComo}</span>`;
   out.style.color = '#15803d';
+}
+
+async function importarChave(chave, btn) {
+  btn.disabled = true;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  fd.append('chave', chave);
+  const resp = await fetch('/admin/distribuicao/importar-chave', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    alert('Erro: ' + data.erro);
+    btn.disabled = false;
+    return;
+  }
+  location.reload();
 }
 
 if (CLIENTE_ID) {
