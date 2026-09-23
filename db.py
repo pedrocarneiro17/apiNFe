@@ -510,6 +510,20 @@ def listar_dfe_pendentes_manifestacao(cliente_id: str) -> list:
             return [r["chave"] for r in _rows(cur)]
 
 
+def existe_dfe_chave(cliente_id: str, chave: str) -> bool:
+    """Se essa chave já está salva (em qualquer NSU, sintético ou real)
+    pra esse cliente — usado pra não alarmar falso positivo de 'nota
+    perdida' quando ela já foi persistida por outro caminho (ex: um dos
+    eventos ligados a ela já trouxe a nota completa)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM dfe_documentos WHERE cliente_id = %s AND chave = %s LIMIT 1",
+                (cliente_id, chave),
+            )
+            return cur.fetchone() is not None
+
+
 def listar_dfe_documentos(cliente_id: str, limit: int = 200, offset: int = 0):
     """Devolve (pagina, total) — já deduplicado por chave. `total` é depois
     da deduplicação, pra bater com o que a paginação da tela mostra."""

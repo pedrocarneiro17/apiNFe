@@ -956,6 +956,7 @@ def admin_distribuicao_verificar_chave():
         "ok": True, "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
         "documentos": docs, "cursor_nsu": db.get_ultimo_nsu_dfe(cliente_id),
         "cnpj_consultado": cliente["cnpj"], "razao_social_consultada": cliente.get("razao_social", ""),
+        "ja_salva": db.existe_dfe_chave(cliente_id, chave),
     })
 
 

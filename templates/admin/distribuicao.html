@@ -259,15 +259,17 @@ async function verificarChave() {
     const nsu = parseInt(d.nsu, 10);
     const cursor = data.cursor_nsu;
     let obs = '';
-    if (!isNaN(nsu)) {
+    if (data.ja_salva) {
+      obs = ' — já está na sua lista';
+    } else if (!isNaN(nsu)) {
       obs = nsu > cursor
         ? ` — NSU ${nsu} (seu cursor está em ${cursor}: ainda não foi alcançada, clique "Sincronizar" de novo)`
-        : ` — NSU ${nsu} (menor que seu cursor ${cursor}: deveria ter sido pega, avise o suporte)`;
+        : ` — NSU ${nsu} (menor que seu cursor ${cursor}, mas ainda não salva — pode ser um "gap" na fila da SEFAZ)`;
     }
     return `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — data: ${d.dhEmi || '—'} — valor: ${d.vNF || '—'}${obs}`;
   }).join('<br>');
   const temNota = data.documentos.some(d => d.tipo === 'resumo' || d.tipo === 'completa');
-  const botaoAdicionar = temNota
+  const botaoAdicionar = (temNota && !data.ja_salva)
     ? ` <button class="btn btn-outline btn-sm" onclick="importarChave('${chave}', this)">Adicionar essa nota na lista</button>`
     : '';
   out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}${botaoAdicionar}` +
