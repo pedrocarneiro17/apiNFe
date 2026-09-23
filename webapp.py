@@ -943,14 +943,14 @@ def admin_distribuicao_verificar_chave():
 
     docs = []
     for doc in resultado["documentos"]:
-        item = {"tipo": doc["tipo"], "schema": doc["schema"]}
+        item = {"tipo": doc["tipo"], "schema": doc["schema"], "nsu": doc["nsu"]}
         if doc["tipo"] in ("resumo", "completa"):
             item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
         docs.append(item)
 
     return jsonify({
         "ok": True, "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
-        "documentos": docs,
+        "documentos": docs, "cursor_nsu": db.get_ultimo_nsu_dfe(cliente_id),
     })
 
 

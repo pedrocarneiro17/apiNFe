@@ -241,9 +241,17 @@ async function verificarChave() {
     out.style.color = '#b91c1c';
     return;
   }
-  const linhas = data.documentos.map(d =>
-    `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — valor: ${d.vNF || '—'}`
-  ).join('<br>');
+  const linhas = data.documentos.map(d => {
+    const nsu = parseInt(d.nsu, 10);
+    const cursor = data.cursor_nsu;
+    let obs = '';
+    if (!isNaN(nsu)) {
+      obs = nsu > cursor
+        ? ` — NSU ${nsu} (seu cursor está em ${cursor}: ainda não foi alcançada, clique "Sincronizar" de novo)`
+        : ` — NSU ${nsu} (menor que seu cursor ${cursor}: deveria ter sido pega, avise o suporte)`;
+    }
+    return `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — data: ${d.dhEmi || '—'} — valor: ${d.vNF || '—'}${obs}`;
+  }).join('<br>');
   out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}`;
   out.style.color = '#15803d';
 }
