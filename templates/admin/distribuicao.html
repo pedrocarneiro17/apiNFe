@@ -179,7 +179,7 @@ async function sincronizar() {
 }
 
 async function resetar() {
-  if (!confirm('Zerar o cursor de sincronização? A próxima sincronização recomeça do início (os documentos já salvos continuam na lista).')) return;
+  if (!confirm('Apagar todos os documentos salvos e recomeçar do zero? Essa ação não pode ser desfeita.')) return;
   const fd = new FormData();
   fd.append('cliente_id', CLIENTE_ID);
   await fetch('/admin/distribuicao/resetar', { method: 'POST', body: fd });

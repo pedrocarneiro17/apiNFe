@@ -410,6 +410,16 @@ def salvar_ultimo_nsu_dfe(cliente_id: str, nsu: int):
             )
 
 
+def apagar_dfe_documentos(cliente_id: str):
+    """Apaga todos os documentos persistidos da Distribuição DFe pra esse
+    cliente — usado no 'Ressincronizar do zero' pra garantir que a próxima
+    sincronização começa realmente do zero, sem manter nada do histórico
+    anterior."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM dfe_documentos WHERE cliente_id = %s", (cliente_id,))
+
+
 def definir_status_sync_dfe(cliente_id: str, status: str, docs_processados: int = 0, erro: str = ""):
     """Progresso da sincronização em background da Distribuição DFe."""
     with _get_conn() as conn:

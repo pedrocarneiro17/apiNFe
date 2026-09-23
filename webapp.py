@@ -845,6 +845,7 @@ def admin_distribuicao_sincronizar():
 def admin_distribuicao_resetar():
     cliente_id = request.form.get("cliente_id", "")
     db.salvar_ultimo_nsu_dfe(cliente_id, 0)
+    db.apagar_dfe_documentos(cliente_id)
     db.definir_status_sync_dfe(cliente_id, "parado", 0)
     return jsonify({"ok": True})
 
