@@ -47,6 +47,18 @@
     </a>
     <span id="status-texto" style="font-size:.82rem;color:var(--muted-fg)"></span>
   </div>
+
+  <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border,#e5e7eb)">
+    <label style="font-size:.8rem;color:var(--muted-fg)">
+      Verificar uma chave específica direto na SEFAZ (não depende do histórico já sincronizado)
+    </label>
+    <div style="display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap">
+      <input id="chave-verificar" type="text" placeholder="Chave de acesso (44 dígitos)"
+             maxlength="44" style="flex:1;min-width:280px;padding:.5rem;border:1px solid #cbd5e1;border-radius:6px">
+      <button class="btn btn-outline btn-sm" onclick="verificarChave()">Verificar</button>
+    </div>
+    <div id="resultado-chave" style="font-size:.82rem;margin-top:.5rem"></div>
+  </div>
   {% endif %}
 </div>
 
@@ -199,6 +211,41 @@ async function manifestar(chave, btn) {
     return;
   }
   location.reload();
+}
+
+async function verificarChave() {
+  const input = document.getElementById('chave-verificar');
+  const out = document.getElementById('resultado-chave');
+  const chave = input.value.replace(/\D/g, '');
+  if (chave.length !== 44) {
+    out.textContent = 'Chave precisa ter 44 dígitos.';
+    out.style.color = '#b91c1c';
+    return;
+  }
+  out.textContent = 'Consultando na SEFAZ...';
+  out.style.color = 'var(--muted-fg)';
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  fd.append('chave', chave);
+  const resp = await fetch('/admin/distribuicao/verificar-chave', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    out.textContent = 'Erro: ' + data.erro;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  if (!data.documentos.length) {
+    out.textContent = `SEFAZ não tem essa chave na caixa de distribuição desse CNPJ agora ` +
+      `(cStat ${data.cStat}: ${data.xMotivo}). Se a nota é antiga, pode já ter saído da janela ` +
+      `de 90 dias de retenção da Distribuição DFe.`;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  const linhas = data.documentos.map(d =>
+    `${d.tipo} — papel: ${d.papel || '—'} — emitente: ${d.xNome_emit || '—'} — valor: ${d.vNF || '—'}`
+  ).join('<br>');
+  out.innerHTML = `Encontrada na SEFAZ (cStat ${data.cStat}):<br>${linhas}`;
+  out.style.color = '#15803d';
 }
 
 if (CLIENTE_ID) {

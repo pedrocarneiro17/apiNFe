@@ -854,15 +854,32 @@ def distribuir_dfe(cnpj: str, uf: str, ult_nsu: int, cert_path: str, key_path: s
            f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
            f'<distNSU><ultNSU>{str(ult_nsu).zfill(15)}</ultNSU></distNSU>'
            f'</distDFeInt>')
-    url  = _url_distribuicao_dfe()
-    resp = _enviar_soap_distribuicao(url, xml, cert_path, key_path)
-    body = _extrair_body(resp)
+    body = _consultar_dist_dfe(xml, cert_path, key_path)
     ns   = {"nfe": NS}
     cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
     xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
     ult   = int(body.findtext(".//nfe:ultNSU", namespaces=ns) or "0")
     maxn  = int(body.findtext(".//nfe:maxNSU", namespaces=ns) or "0")
+    documentos = _extrair_docs_zip(body)
 
+    print(f"[nfe] Distribuição DFe: cStat={cstat} | ultNSU={ult} | maxNSU={maxn} "
+          f"| docs={len(documentos)}", flush=True)
+    return {
+        "cStat": cstat, "xMotivo": xmot,
+        "ultNSU": ult, "maxNSU": maxn,
+        "tem_mais": ult < maxn,
+        "documentos": documentos,
+    }
+
+
+def _consultar_dist_dfe(xml_inner: str, cert_path: str, key_path: str):
+    url  = _url_distribuicao_dfe()
+    resp = _enviar_soap_distribuicao(url, xml_inner, cert_path, key_path)
+    return _extrair_body(resp)
+
+
+def _extrair_docs_zip(body) -> list:
+    ns = {"nfe": NS}
     documentos = []
     for doc_zip in body.findall(".//nfe:docZip", namespaces=ns):
         nsu    = doc_zip.get("NSU", "")
@@ -877,15 +894,33 @@ def distribuir_dfe(cnpj: str, uf: str, ult_nsu: int, cert_path: str, key_path: s
             "tipo": _classificar_schema(schema),
             "xml": xml_doc,
         })
+    return documentos
 
-    print(f"[nfe] Distribuição DFe: cStat={cstat} | ultNSU={ult} | maxNSU={maxn} "
-          f"| docs={len(documentos)}", flush=True)
-    return {
-        "cStat": cstat, "xMotivo": xmot,
-        "ultNSU": ult, "maxNSU": maxn,
-        "tem_mais": ult < maxn,
-        "documentos": documentos,
-    }
+
+def consultar_dfe_por_chave(chave: str, cnpj: str, uf: str, cert_path: str, key_path: str) -> dict:
+    """
+    Consulta NFeDistribuicaoDFe filtrando por uma chave de acesso específica
+    (modo `consChNFe`, alternativa ao `distNSU` — não depende de paginação
+    nem de onde o cursor de NSU está). Útil pra checar se uma nota
+    específica está (ou não) na caixa de distribuição desse CNPJ, sem
+    precisar varrer o histórico inteiro. Confirmado contra a implementação
+    de referência (nfephp-org/sped-nfe, método sefazDistDFe com $chave).
+    """
+    cuf_autor = _UF_IBGE[uf.upper()]
+    xml = (f'<distDFeInt versao="1.01" xmlns="{NS}">'
+           f'<tpAmb>{_tp_amb()}</tpAmb>'
+           f'<cUFAutor>{cuf_autor}</cUFAutor>'
+           f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
+           f'<consChNFe><chNFe>{_so_numeros(chave)}</chNFe></consChNFe>'
+           f'</distDFeInt>')
+    body = _consultar_dist_dfe(xml, cert_path, key_path)
+    ns   = {"nfe": NS}
+    cstat = body.findtext(".//nfe:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//nfe:xMotivo", namespaces=ns) or ""
+    documentos = _extrair_docs_zip(body)
+
+    print(f"[nfe] Distribuição DFe (por chave {chave}): cStat={cstat} | docs={len(documentos)}", flush=True)
+    return {"cStat": cstat, "xMotivo": xmot, "documentos": documentos}
 
 
 def _parse_resumo_nfe(xml_bytes: bytes, cnpj_consultado: str) -> dict:

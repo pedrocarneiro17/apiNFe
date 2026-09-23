@@ -910,6 +910,50 @@ def admin_distribuicao_manifestar():
     return jsonify({"ok": True})
 
 
+@app.route("/admin/distribuicao/verificar-chave", methods=["POST"])
+@_requer_login
+def admin_distribuicao_verificar_chave():
+    """Consulta direto na SEFAZ (sem depender do NSU/histórico já salvo) se
+    uma chave específica está na caixa de distribuição desse CNPJ — útil pra
+    diagnosticar nota autorizada que não aparece na sincronização normal."""
+    cliente_id = request.form.get("cliente_id", "")
+    chave = request.form.get("chave", "").strip()
+    if not chave or len(_so_numeros(chave)) != 44:
+        return jsonify({"erro": "Chave de acesso inválida (precisa ter 44 dígitos)."}), 400
+
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente or not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
+
+    from fluxo_nfe_api import consultar_dfe_por_chave, _parse_resumo_nfe, _pfx_para_pem
+    import shutil
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    try:
+        resultado = consultar_dfe_por_chave(chave, cliente["cnpj"], cliente["uf"], cert_path, key_path)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 502
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    docs = []
+    for doc in resultado["documentos"]:
+        item = {"tipo": doc["tipo"], "schema": doc["schema"]}
+        if doc["tipo"] in ("resumo", "completa"):
+            item.update(_parse_resumo_nfe(doc["xml"], cliente["cnpj"]))
+        docs.append(item)
+
+    return jsonify({
+        "ok": True, "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
+        "documentos": docs,
+    })
+
+
 @app.route("/admin/distribuicao/baixar-lote")
 @_requer_login
 def admin_distribuicao_baixar_lote():
