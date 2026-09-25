@@ -1109,6 +1109,195 @@ def admin_distribuicao_baixar_lote():
                     headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
 
 
+def _sincronizar_cte_tarefa(cliente_id: str, cnpj: str, uf: str,
+                            cert_path: str, key_path: str, tmp_dir: str):
+    """Mesma lógica de `_sincronizar_dfe_tarefa` (NF-e), sem o passo de
+    manifestação — CT-e não tem esse mecanismo."""
+    from fluxo_nfe_api import distribuir_cte, _parse_resumo_cte, _parse_resumo_evento_cte
+    import shutil, time
+
+    total = 0
+    try:
+        while True:
+            ult_nsu = db.get_ultimo_nsu_cte(cliente_id)
+            resultado = distribuir_cte(cnpj, uf, ult_nsu, cert_path, key_path)
+
+            if resultado["cStat"] not in ("137", "138"):
+                db.definir_status_sync_cte(cliente_id, "limite_sefaz", total,
+                                           f"[{resultado['cStat']}] {resultado['xMotivo']}")
+                print(f"[cte] {cliente_id} pausado: {resultado['cStat']} {resultado['xMotivo']}", flush=True)
+                return
+
+            for doc in resultado["documentos"]:
+                item = {"nsu": doc["nsu"], "tipo": doc["tipo"]}
+                if doc["tipo"] in ("resumo", "completa"):
+                    item.update(_parse_resumo_cte(doc["xml"], cnpj))
+                elif doc["tipo"] in ("evento_resumo", "evento_completo"):
+                    item.update(_parse_resumo_evento_cte(doc["xml"]))
+                if doc["tipo"] == "completa":
+                    item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
+
+                db.salvar_cte_documento(cliente_id, item)
+                total += 1
+
+            db.salvar_ultimo_nsu_cte(cliente_id, resultado["ultNSU"])
+            db.definir_status_sync_cte(cliente_id, "rodando", total)
+            print(f"[cte] {cliente_id} processados={total} "
+                  f"NSU={resultado['ultNSU']}/{resultado['maxNSU']}", flush=True)
+
+            if not resultado["tem_mais"]:
+                db.definir_status_sync_cte(cliente_id, "concluido", total)
+                return
+            time.sleep(2)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        db.definir_status_sync_cte(cliente_id, "erro", total, str(e))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/admin/distribuicao-cte")
+@_requer_login
+def admin_distribuicao_cte():
+    import base64
+    clientes = db.listar_clientes()
+    cliente_id = request.args.get("cliente_id", "")
+    limit = 200
+    offset = max(0, int(request.args.get("offset", 0) or 0))
+    if cliente_id:
+        documentos, total_documentos = db.listar_cte_documentos(cliente_id, limit=limit, offset=offset)
+    else:
+        documentos, total_documentos = [], 0
+    for d in documentos:
+        if d.get("xml_conteudo"):
+            d["xml_base64"] = base64.b64encode(d["xml_conteudo"].encode("utf-8")).decode("ascii")
+    status_sync = db.get_status_sync_cte(cliente_id) if cliente_id else None
+    return render_template("admin/distribuicao_cte.html", clientes=clientes,
+                           cliente_id=cliente_id, documentos=documentos,
+                           status_sync=status_sync, offset=offset, limit=limit,
+                           total_documentos=total_documentos)
+
+
+@app.route("/admin/distribuicao-cte/status")
+@_requer_login
+def admin_distribuicao_cte_status():
+    cliente_id = request.args.get("cliente_id", "")
+    return jsonify(db.get_status_sync_cte(cliente_id))
+
+
+@app.route("/admin/distribuicao-cte/sincronizar", methods=["POST"])
+@_requer_login
+def admin_distribuicao_cte_sincronizar():
+    cliente_id = request.form.get("cliente_id", "")
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente:
+        return jsonify({"erro": "Emitente não encontrado."}), 404
+    if not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente sem certificado digital cadastrado."}), 400
+
+    status_atual = db.get_status_sync_cte(cliente_id)
+    if status_atual.get("status") == "rodando":
+        return jsonify({"erro": "Já tem uma sincronização em andamento."}), 400
+
+    from fluxo_nfe_api import _pfx_para_pem
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    db.definir_status_sync_cte(cliente_id, "rodando", 0)
+    threading.Thread(
+        target=_sincronizar_cte_tarefa,
+        args=(cliente_id, cliente["cnpj"], cliente["uf"], cert_path, key_path, tmp_dir),
+        daemon=True,
+    ).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/admin/distribuicao-cte/resetar", methods=["POST"])
+@_requer_login
+def admin_distribuicao_cte_resetar():
+    cliente_id = request.form.get("cliente_id", "")
+    db.salvar_ultimo_nsu_cte(cliente_id, 0)
+    db.apagar_cte_documentos(cliente_id)
+    db.definir_status_sync_cte(cliente_id, "parado", 0)
+    return jsonify({"ok": True})
+
+
+@app.route("/admin/distribuicao-cte/verificar-nsu", methods=["POST"])
+@_requer_login
+def admin_distribuicao_cte_verificar_nsu():
+    cliente_id = request.form.get("cliente_id", "")
+    nsu_raw = request.form.get("nsu", "").strip()
+    if not nsu_raw.isdigit():
+        return jsonify({"erro": "NSU precisa ser um número."}), 400
+    nsu = int(nsu_raw)
+
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente or not cliente.get("caminho_certificado"):
+        return jsonify({"erro": "Emitente não encontrado ou sem certificado."}), 400
+
+    from fluxo_nfe_api import consultar_cte_por_nsu, _parse_resumo_cte, _parse_resumo_evento_cte, _pfx_para_pem
+    import shutil
+    caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+    try:
+        cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(
+            caminho_pfx, cliente.get("senha_certificado", "")
+        )
+    except Exception as e:
+        return jsonify({"erro": f"Não foi possível abrir o certificado: {e}"}), 400
+    try:
+        resultado = consultar_cte_por_nsu(nsu, cliente["cnpj"], cliente["uf"], cert_path, key_path)
+        doc = next(iter(resultado["documentos"]), None)
+        if not doc:
+            return jsonify({
+                "ok": True, "encontrado": False,
+                "cStat": resultado["cStat"], "xMotivo": resultado["xMotivo"],
+            })
+
+        item = {"nsu": nsu, "tipo": doc["tipo"]}
+        if doc["tipo"] in ("resumo", "completa"):
+            item.update(_parse_resumo_cte(doc["xml"], cliente["cnpj"]))
+        elif doc["tipo"] in ("evento_resumo", "evento_completo"):
+            item.update(_parse_resumo_evento_cte(doc["xml"]))
+        if doc["tipo"] == "completa":
+            item["xml_conteudo"] = doc["xml"].decode("utf-8", errors="replace")
+
+        db.salvar_cte_documento(cliente_id, item)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 502
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return jsonify({
+        "ok": True, "encontrado": True, "tipo": item["tipo"],
+        "chave": item.get("chave", ""), "descricao": item.get("xNome_emit", ""),
+    })
+
+
+@app.route("/admin/distribuicao-cte/baixar-lote")
+@_requer_login
+def admin_distribuicao_cte_baixar_lote():
+    """ZIP com os CT-e completos já sincronizados desse emitente."""
+    import io, zipfile
+    cliente_id = request.args.get("cliente_id", "")
+    papel = request.args.get("papel") or None
+    linhas = db.xmls_cte_documentos(cliente_id, papel=papel)
+    if not linhas:
+        return "Nenhum XML completo sincronizado ainda pra esse emitente/filtro.", 404
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for chave, xml_conteudo in linhas:
+            zf.writestr(f"CTe{chave}.xml", xml_conteudo or "")
+    buf.seek(0)
+    nome_arquivo = f"ctes_{cliente_id}{('_' + papel) if papel else ''}.zip"
+    return Response(buf.getvalue(), mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
+
+
 if __name__ == "__main__":
     print("Acesse: http://localhost:5000/admin/notas")
     app.run(debug=False, port=5000)

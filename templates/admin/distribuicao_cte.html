@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Distribuição DFe CT-e — Emissor Fiscal{% endblock %}
+{% block nav_distribuicao_cte %}active{% endblock %}
+{% block page_title %}Buscar CT-e na SEFAZ{% endblock %}
+{% block page_subtitle %}Consulta direto na SEFAZ os CT-e associados ao CNPJ do emitente{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:1000px">
+  <div class="card-title">Distribuição DFe de CT-e (CTeDistribuicaoDFe)</div>
+
+  <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;
+              padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.82rem;color:#1e40af">
+    Serviço próprio pra CT-e (Conhecimento de Transporte Eletrônico), separado
+    do de NF-e — mesmo modelo (NSU exclusivo por CNPJ, retenção de 90 dias).
+    "Sincronizar" busca TODO o histórico disponível, em segundo plano — pode
+    levar minutos ou horas pra um histórico grande. Os documentos vão ficando
+    salvos conforme chegam, então dá pra sair da tela e voltar depois.
+    Diferente da NF-e, o CT-e <strong>não tem manifestação do destinatário</strong>
+    pra destravar o XML completo.
+  </div>
+
+  <form method="GET">
+    <div class="form-group">
+      <label>Emitente *</label>
+      <select name="cliente_id" required onchange="this.form.submit()">
+        <option value="">Selecione o emitente...</option>
+        {% for c in clientes %}
+          <option value="{{ c.id }}" {% if cliente_id == c.id %}selected{% endif %}>
+            {{ c.id }} — {{ c.razao_social }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+  </form>
+
+  {% if cliente_id %}
+  <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+    <button id="btn-sincronizar" class="btn btn-primary" onclick="sincronizar()">
+      <i class="ti ti-refresh"></i> Sincronizar
+    </button>
+    <button class="btn btn-outline" onclick="resetar()">
+      Ressincronizar do zero
+    </button>
+    <a class="btn btn-outline" href="/admin/distribuicao-cte/baixar-lote?cliente_id={{ cliente_id }}">
+      <i class="ti ti-download"></i> Baixar tudo (ZIP)
+    </a>
+    <span id="status-texto" style="font-size:.82rem;color:var(--muted-fg)"></span>
+  </div>
+
+  <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border,#e5e7eb)">
+    <label style="font-size:.8rem;color:var(--muted-fg)">
+      Consultar/reprocessar um NSU específico (útil pra investigar "buracos" na
+      fila, ou pra atualizar um item antigo já salvo)
+    </label>
+    <div style="display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap">
+      <input id="nsu-verificar" type="number" placeholder="Número do NSU"
+             style="flex:1;min-width:200px;padding:.5rem;border:1px solid #cbd5e1;border-radius:6px">
+      <button class="btn btn-outline btn-sm" onclick="verificarNsu()">Consultar</button>
+    </div>
+    <div id="resultado-nsu" style="font-size:.82rem;margin-top:.5rem"></div>
+  </div>
+  {% endif %}
+</div>
+
+{% if cliente_id %}
+<div class="card" style="max-width:1000px;margin-top:1rem">
+  <div class="card-title">
+    Documentos
+    <span style="font-size:.78rem;color:var(--muted-fg);font-weight:normal">
+      {% if total_documentos %}
+        mostrando {{ offset + 1 }}–{{ offset + documentos|length }} de {{ total_documentos }}
+      {% else %}
+        nenhum documento ainda
+      {% endif %}
+    </span>
+  </div>
+
+  {% if documentos %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>NSU</th><th>Tipo</th><th>Papel</th><th>Emitente</th>
+          <th>Data</th><th>Valor</th><th>Situação</th><th>Chave</th><th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in documentos %}
+        <tr>
+          <td style="font-size:.72rem;color:var(--muted-fg)">{{ d.nsu }}</td>
+          <td>{{ d.tipo }}</td>
+          <td>{{ d.papel or '—' }}</td>
+          <td>{{ d.emitente_nome or '—' }}</td>
+          <td>{{ d.data_emissao or '—' }}</td>
+          <td>{{ 'R$ %.2f'|format(d.valor|float) if d.valor else '—' }}</td>
+          <td>{{ d.situacao or '—' }}</td>
+          <td style="font-size:.7rem;color:var(--muted-fg)">{{ d.chave or '—' }}</td>
+          <td>
+            {% if d.xml_base64 %}
+            <a href="data:application/xml;base64,{{ d.xml_base64 }}"
+               download="CTe{{ d.chave }}.xml" class="btn btn-outline btn-sm">
+              Baixar XML
+            </a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;gap:.75rem;padding:.85rem 1rem">
+    {% if offset > 0 %}
+      <a class="btn btn-outline btn-sm" href="?cliente_id={{ cliente_id }}&offset={{ [offset - limit, 0]|max }}">
+        ← Anterior
+      </a>
+    {% endif %}
+    {% if offset + documentos|length < total_documentos %}
+      <a class="btn btn-outline btn-sm" href="?cliente_id={{ cliente_id }}&offset={{ offset + limit }}">
+        Próximos {{ limit }} →
+      </a>
+    {% endif %}
+  </div>
+  {% else %}
+    <p style="color:var(--muted-fg);padding:0 1rem 1rem">
+      Nenhum documento sincronizado ainda pra esse emitente. Clique "Sincronizar" pra começar.
+    </p>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+const CLIENTE_ID = {{ cliente_id | tojson }};
+
+function statusTexto(s) {
+  const map = {
+    parado: 'Parado.', rodando: 'Sincronizando…',
+    concluido: 'Sincronização concluída.',
+    limite_sefaz: 'SEFAZ pediu pausa — tente de novo mais tarde (não insista, isso reinicia o prazo de espera).',
+    erro: 'Erro na sincronização.',
+  };
+  return map[s] || s;
+}
+
+async function atualizarStatus() {
+  const resp = await fetch('/admin/distribuicao-cte/status?cliente_id=' + encodeURIComponent(CLIENTE_ID));
+  const data = await resp.json();
+  const txt = document.getElementById('status-texto');
+  let msg = statusTexto(data.status) + ' ' + (data.docs_processados || 0) + ' documento(s) processados nesta rodada.';
+  if (data.erro) msg += ' — ' + data.erro;
+  if (txt) txt.textContent = msg;
+  return data.status;
+}
+
+async function pollStatus() {
+  const status = await atualizarStatus();
+  if (status === 'rodando') {
+    setTimeout(pollStatus, 3000);
+  } else {
+    const btn = document.getElementById('btn-sincronizar');
+    if (btn) btn.disabled = false;
+    if (status === 'concluido' || status === 'erro' || status === 'limite_sefaz') {
+      location.reload();
+    }
+  }
+}
+
+async function sincronizar() {
+  const btn = document.getElementById('btn-sincronizar');
+  btn.disabled = true;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  const resp = await fetch('/admin/distribuicao-cte/sincronizar', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    alert('Erro: ' + data.erro);
+    btn.disabled = false;
+    return;
+  }
+  pollStatus();
+}
+
+async function resetar() {
+  if (!confirm('Apagar todos os documentos salvos e recomeçar do zero? Essa ação não pode ser desfeita.')) return;
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  await fetch('/admin/distribuicao-cte/resetar', { method: 'POST', body: fd });
+  location.reload();
+}
+
+async function verificarNsu() {
+  const input = document.getElementById('nsu-verificar');
+  const out = document.getElementById('resultado-nsu');
+  const nsu = input.value.trim();
+  if (!nsu || !/^\d+$/.test(nsu)) {
+    out.textContent = 'Informe um número de NSU válido.';
+    out.style.color = '#b91c1c';
+    return;
+  }
+  out.textContent = 'Consultando na SEFAZ...';
+  out.style.color = 'var(--muted-fg)';
+  const fd = new FormData();
+  fd.append('cliente_id', CLIENTE_ID);
+  fd.append('nsu', nsu);
+  const resp = await fetch('/admin/distribuicao-cte/verificar-nsu', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (!data.ok) {
+    out.textContent = 'Erro: ' + data.erro;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  if (!data.encontrado) {
+    out.textContent = `NSU ${nsu}: nada retornado (cStat ${data.cStat}: ${data.xMotivo}).`;
+    out.style.color = '#b91c1c';
+    return;
+  }
+  out.textContent = `NSU ${nsu} salvo/atualizado — tipo: ${data.tipo}` +
+    (data.chave ? `, chave: ${data.chave}` : '') +
+    (data.descricao ? `, descrição: ${data.descricao}` : '') +
+    '. Recarregue a página pra ver na lista.';
+  out.style.color = '#15803d';
+}
+
+if (CLIENTE_ID) {
+  atualizarStatus().then(status => {
+    if (status === 'rodando') {
+      document.getElementById('btn-sincronizar').disabled = true;
+      pollStatus();
+    }
+  });
+}
+</script>
+{% endblock %}

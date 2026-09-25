@@ -1707,3 +1707,222 @@ def emitir_nfce(dados: dict) -> dict:
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ─── Distribuição DFe de CT-e (CTeDistribuicaoDFe) ────────────────────────
+#
+# Mesmo modelo do NFeDistribuicaoDFe (NSU exclusivo por CNPJ, distNSU/consNSU,
+# retenção de 90 dias), mas serviço, namespace e nomes de schema próprios do
+# CT-e. Confirmado contra a implementação de referência (nfephp-org/sped-cte,
+# `Tools::sefazDistDFe`, storage/wscte_4.00_mod57.xml).
+#
+# Diferença importante vs NF-e: CT-e NÃO tem "manifestação do destinatário"
+# equivalente (que libera o XML completo) — tem eventos próprios (ex:
+# "Prestação de Serviço em Desacordo"), mas nenhum deles é necessário pra
+# destravar o procCTe. Por isso aqui não existe um passo de manifestação
+# automática como em `distribuir_dfe`/`manifestar_destinatario`.
+
+NS_CTE = "http://www.portalfiscal.inf.br/cte"
+WSDL_BASE_CTE = "http://www.portalfiscal.inf.br/cte/wsdl"
+
+_URL_DISTRIBUICAO_CTE: dict[str, str] = {
+    "prod": "https://www1.cte.fazenda.gov.br/CTeDistribuicaoDFe/CTeDistribuicaoDFe.asmx",
+    "homo": "https://hom1.cte.fazenda.gov.br/CTeDistribuicaoDFe/CTeDistribuicaoDFe.asmx",
+}
+
+_TIPOS_SCHEMA_CTE = {
+    "resCTe": "resumo", "procCTe": "completa",
+    "resEvento": "evento_resumo", "procEventoCTe": "evento_completo",
+}
+
+
+def _url_distribuicao_cte() -> str:
+    return _URL_DISTRIBUICAO_CTE["prod" if _is_prod() else "homo"]
+
+
+def _classificar_schema_cte(schema: str) -> str:
+    prefixo = schema.split("_")[0] if schema else ""
+    return _TIPOS_SCHEMA_CTE.get(prefixo, "outro")
+
+
+def _montar_soap_distribuicao_cte(xml_inner: str) -> bytes:
+    """Envelope do CTeDistribuicaoDFe — mesmo formato do NFeDistribuicaoDFe
+    (sem cabeçalho, corpo embrulhado no nome do método), só troca o nome dos
+    elementos (cteDistDFeInteresse/cteDadosMsg) e o namespace."""
+    ns_wsdl = f"{WSDL_BASE_CTE}/CTeDistribuicaoDFe"
+    soap = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<soap12:Envelope'
+        f'  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        f'  xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+        f'  xmlns:soap12="{_SOAP_NS}">'
+        f'<soap12:Body>'
+        f'<cteDistDFeInteresse xmlns="{ns_wsdl}">'
+        f'<cteDadosMsg xmlns="{ns_wsdl}">'
+        f'{xml_inner}'
+        f'</cteDadosMsg>'
+        f'</cteDistDFeInteresse>'
+        f'</soap12:Body>'
+        f'</soap12:Envelope>'
+    ).encode("utf-8")
+    return soap
+
+
+def _enviar_soap_distribuicao_cte(url: str, xml_inner: str,
+                                  cert_path: str, key_path: str) -> etree._Element:
+    soap_bytes = _montar_soap_distribuicao_cte(xml_inner)
+    soap_action = f'"{WSDL_BASE_CTE}/CTeDistribuicaoDFe/cteDistDFeInteresse"'
+    print(f"[cte] POST {url}", flush=True)
+    resp = requests.post(
+        url,
+        data=soap_bytes,
+        cert=(cert_path, key_path),
+        headers={
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            "SOAPAction": soap_action,
+        },
+        timeout=30,
+    )
+    print(f"[cte] HTTP {resp.status_code}", flush=True)
+    resp.raise_for_status()
+    return etree.fromstring(resp.content)
+
+
+def _consultar_dist_cte(xml_inner: str, cert_path: str, key_path: str):
+    url = _url_distribuicao_cte()
+    resp = _enviar_soap_distribuicao_cte(url, xml_inner, cert_path, key_path)
+    return _extrair_body(resp)
+
+
+def _extrair_docs_zip_cte(body) -> list:
+    ns = {"cte": NS_CTE}
+    documentos = []
+    for doc_zip in body.findall(".//cte:docZip", namespaces=ns):
+        nsu    = doc_zip.get("NSU", "")
+        schema = doc_zip.get("schema", "")
+        try:
+            xml_doc = gzip.decompress(base64.b64decode(doc_zip.text))
+        except Exception as e:
+            print(f"[cte] erro ao descompactar docZip NSU={nsu}: {e}", flush=True)
+            continue
+        documentos.append({
+            "nsu": nsu, "schema": schema,
+            "tipo": _classificar_schema_cte(schema),
+            "xml": xml_doc,
+        })
+    return documentos
+
+
+def distribuir_cte(cnpj: str, uf: str, ult_nsu: int, cert_path: str, key_path: str) -> dict:
+    """Consulta CTeDistribuicaoDFe a partir do NSU informado (0 = do início)
+    — mesma lógica de paginação do `distribuir_dfe` (NF-e)."""
+    cuf_autor = _UF_IBGE[uf.upper()]
+    xml = (f'<distDFeInt versao="1.01" xmlns="{NS_CTE}">'
+           f'<tpAmb>{_tp_amb()}</tpAmb>'
+           f'<cUFAutor>{cuf_autor}</cUFAutor>'
+           f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
+           f'<distNSU><ultNSU>{str(ult_nsu).zfill(15)}</ultNSU></distNSU>'
+           f'</distDFeInt>')
+    body = _consultar_dist_cte(xml, cert_path, key_path)
+    ns   = {"cte": NS_CTE}
+    cstat = body.findtext(".//cte:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//cte:xMotivo", namespaces=ns) or ""
+    ult   = int(body.findtext(".//cte:ultNSU", namespaces=ns) or "0")
+    maxn  = int(body.findtext(".//cte:maxNSU", namespaces=ns) or "0")
+    documentos = _extrair_docs_zip_cte(body)
+
+    print(f"[cte] Distribuição CTe: cStat={cstat} | ultNSU={ult} | maxNSU={maxn} "
+          f"| docs={len(documentos)}", flush=True)
+    return {
+        "cStat": cstat, "xMotivo": xmot,
+        "ultNSU": ult, "maxNSU": maxn,
+        "tem_mais": ult < maxn,
+        "documentos": documentos,
+    }
+
+
+def consultar_cte_por_nsu(nsu: int, cnpj: str, uf: str, cert_path: str, key_path: str) -> dict:
+    """Consulta um NSU específico (modo consNSU) — mesma utilidade do
+    equivalente em NF-e: investigar gaps ou reprocessar um item já salvo."""
+    cuf_autor = _UF_IBGE[uf.upper()]
+    xml = (f'<distDFeInt versao="1.01" xmlns="{NS_CTE}">'
+           f'<tpAmb>{_tp_amb()}</tpAmb>'
+           f'<cUFAutor>{cuf_autor}</cUFAutor>'
+           f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
+           f'<consNSU><NSU>{str(int(nsu)).zfill(15)}</NSU></consNSU>'
+           f'</distDFeInt>')
+    body = _consultar_dist_cte(xml, cert_path, key_path)
+    ns   = {"cte": NS_CTE}
+    cstat = body.findtext(".//cte:cStat", namespaces=ns) or ""
+    xmot  = body.findtext(".//cte:xMotivo", namespaces=ns) or ""
+    documentos = _extrair_docs_zip_cte(body)
+
+    print(f"[cte] Distribuição CTe (por NSU {nsu}): cStat={cstat} | docs={len(documentos)}", flush=True)
+    return {"cStat": cstat, "xMotivo": xmot, "documentos": documentos}
+
+
+def _parse_resumo_cte(xml_bytes: bytes, cnpj_consultado: str) -> dict:
+    """
+    Extrai os campos exibíveis de um resCTe (resumo) ou procCTe (completo).
+    Mesma lógica de `_parse_resumo_nfe`, adaptada aos nomes de tag do CT-e
+    (chCTe em vez de chNFe, vCTe/vTPrest em vez de vNF).
+    """
+    try:
+        root = etree.fromstring(xml_bytes)
+    except Exception:
+        return {}
+    ns = {"cte": NS_CTE}
+
+    def t(*tags):
+        return root.findtext(".//cte:" + "/cte:".join(tags), namespaces=ns) or ""
+
+    cnpj_emit = t("CNPJ") or t("emit", "CNPJ")
+    x_nome    = t("xNome") or t("emit", "xNome")
+    dh_emi    = t("dhEmi") or t("infCte", "ide", "dhEmi")
+    v_ct      = t("vCTe") or t("vTPrest") or t("infCte", "vPrest", "vTPrest")
+    c_sit     = t("cSitCTe")
+    ch_cte    = t("chCTe")
+    if not ch_cte:
+        inf_el = root.find(".//cte:infCte", namespaces=ns)
+        if inf_el is not None:
+            ch_cte = (inf_el.get("Id", "") or "")[3:]  # remove prefixo "CTe"
+
+    alvo = _so_numeros(cnpj_consultado)
+    papel = "emitente" if _so_numeros(cnpj_emit)[:8] == alvo[:8] else "destinatario"
+
+    return {
+        "chave": ch_cte, "cnpj_emit": cnpj_emit, "xNome_emit": x_nome,
+        "dhEmi": dh_emi[:10] if dh_emi else "", "vNF": v_ct,
+        "cSitNFe": c_sit, "papel": papel,
+    }
+
+
+def _parse_resumo_evento_cte(xml_bytes: bytes) -> dict:
+    """
+    Extrai os campos exibíveis de um resEvento ligado a um CT-e — mesmo
+    schema genérico usado pra NF-e, mas o campo que referencia o documento
+    pode vir como `chCTe` (não confirmado se esse serviço usa `chNFe`
+    genérico ou `chCTe` específico — tenta os dois por segurança).
+    """
+    try:
+        root = etree.fromstring(xml_bytes)
+    except Exception:
+        return {}
+    ns = {"cte": NS_CTE}
+
+    def t(*tags):
+        return root.findtext(".//cte:" + "/cte:".join(tags), namespaces=ns) or ""
+
+    ch_ref   = t("chCTe") or t("chNFe")
+    tp_ev    = t("tpEvento")
+    dh_ev    = t("dhEvento")
+    x_ev     = t("xEvento")
+    cnpj_aut = t("CNPJ") or t("CPF")
+
+    return {
+        "chave": ch_ref,
+        "dhEmi": dh_ev[:10] if dh_ev else "",
+        "xNome_emit": x_ev or (f"Evento {tp_ev}" if tp_ev else ""),
+        "cnpj_emit": cnpj_aut,
+        "papel": "evento",
+    }

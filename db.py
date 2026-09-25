@@ -213,6 +213,30 @@ def init_db():
                     criado_em       TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (cliente_id, nsu)
                 );
+
+                CREATE TABLE IF NOT EXISTS cte_nsu_cursor (
+                    cliente_id TEXT PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+                    ultimo_nsu BIGINT DEFAULT 0,
+                    status TEXT DEFAULT 'parado',
+                    docs_processados INTEGER DEFAULT 0,
+                    erro TEXT DEFAULT ''
+                );
+
+                CREATE TABLE IF NOT EXISTS cte_documentos (
+                    cliente_id      TEXT,
+                    nsu             BIGINT,
+                    chave           TEXT DEFAULT '',
+                    tipo            TEXT DEFAULT '',
+                    papel           TEXT DEFAULT '',
+                    emitente_cnpj   TEXT DEFAULT '',
+                    emitente_nome   TEXT DEFAULT '',
+                    data_emissao    TEXT DEFAULT '',
+                    valor           NUMERIC(14,2) DEFAULT 0,
+                    situacao        TEXT DEFAULT '',
+                    xml_conteudo    TEXT DEFAULT '',
+                    criado_em       TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (cliente_id, nsu)
+                );
             """)
 
     migracoes = [
@@ -571,6 +595,150 @@ def xmls_dfe_documentos(cliente_id: str, papel: str = None):
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT chave, xml_conteudo FROM dfe_documentos WHERE {where} ORDER BY nsu",
+                params,
+            )
+            return cur.fetchall()
+
+
+# ── Distribuição DFe — CT-e (tabelas paralelas às de NF-e, mesmo NSU é
+# exclusivo por serviço/documento — não dá pra compartilhar cursor) ────────
+
+def get_ultimo_nsu_cte(cliente_id: str) -> int:
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ultimo_nsu FROM cte_nsu_cursor WHERE cliente_id = %s",
+                        (cliente_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+
+def salvar_ultimo_nsu_cte(cliente_id: str, nsu: int):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO cte_nsu_cursor (cliente_id, ultimo_nsu)
+                   VALUES (%s, %s)
+                   ON CONFLICT (cliente_id) DO UPDATE SET ultimo_nsu = EXCLUDED.ultimo_nsu""",
+                (cliente_id, int(nsu)),
+            )
+
+
+def apagar_cte_documentos(cliente_id: str):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM cte_documentos WHERE cliente_id = %s", (cliente_id,))
+
+
+def definir_status_sync_cte(cliente_id: str, status: str, docs_processados: int = 0, erro: str = ""):
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO cte_nsu_cursor (cliente_id, status, docs_processados, erro)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (cliente_id) DO UPDATE SET
+                       status = EXCLUDED.status,
+                       docs_processados = EXCLUDED.docs_processados,
+                       erro = EXCLUDED.erro""",
+                (cliente_id, status, docs_processados, erro),
+            )
+
+
+def get_status_sync_cte(cliente_id: str) -> dict:
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                "SELECT status, docs_processados, erro, ultimo_nsu FROM cte_nsu_cursor WHERE cliente_id = %s",
+                (cliente_id,),
+            )
+            row = _row(cur)
+            return row or {"status": "parado", "docs_processados": 0, "erro": "", "ultimo_nsu": 0}
+
+
+def salvar_cte_documento(cliente_id: str, doc: dict):
+    """Upsert de um documento da Distribuição DFe de CT-e — mesmo padrão
+    protetivo de xml_conteudo do equivalente em NF-e (salvar_dfe_documento)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO cte_documentos
+                     (cliente_id, nsu, chave, tipo, papel, emitente_cnpj,
+                      emitente_nome, data_emissao, valor, situacao, xml_conteudo)
+                   VALUES (%(cliente_id)s, %(nsu)s, %(chave)s, %(tipo)s, %(papel)s,
+                           %(emitente_cnpj)s, %(emitente_nome)s, %(data_emissao)s,
+                           %(valor)s, %(situacao)s, %(xml_conteudo)s)
+                   ON CONFLICT (cliente_id, nsu) DO UPDATE SET
+                     chave = EXCLUDED.chave, tipo = EXCLUDED.tipo, papel = EXCLUDED.papel,
+                     emitente_cnpj = EXCLUDED.emitente_cnpj, emitente_nome = EXCLUDED.emitente_nome,
+                     data_emissao = EXCLUDED.data_emissao, valor = EXCLUDED.valor,
+                     situacao = EXCLUDED.situacao,
+                     xml_conteudo = CASE WHEN COALESCE(EXCLUDED.xml_conteudo,'')=''
+                                          THEN cte_documentos.xml_conteudo
+                                          ELSE EXCLUDED.xml_conteudo END""",
+                {
+                    "cliente_id": cliente_id,
+                    "nsu": int(doc.get("nsu") or 0),
+                    "chave": doc.get("chave", ""),
+                    "tipo": doc.get("tipo", ""),
+                    "papel": doc.get("papel", ""),
+                    "emitente_cnpj": doc.get("cnpj_emit", ""),
+                    "emitente_nome": doc.get("xNome_emit", ""),
+                    "data_emissao": doc.get("dhEmi", ""),
+                    "valor": float(doc.get("vNF") or 0),
+                    "situacao": doc.get("cSitNFe", ""),
+                    "xml_conteudo": doc.get("xml_conteudo", ""),
+                },
+            )
+
+
+def existe_cte_chave(cliente_id: str, chave: str) -> bool:
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM cte_documentos WHERE cliente_id = %s AND chave = %s LIMIT 1",
+                (cliente_id, chave),
+            )
+            return cur.fetchone() is not None
+
+
+def listar_cte_documentos(cliente_id: str, limit: int = 200, offset: int = 0):
+    """Devolve (pagina, total) — mesma deduplicação por chave do equivalente
+    em NF-e (resumo/completa da mesma chave; eventos sempre passam)."""
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            cur.execute(
+                "SELECT * FROM cte_documentos WHERE cliente_id = %s ORDER BY nsu DESC",
+                (cliente_id,),
+            )
+            rows = _rows(cur)
+
+    ordem_tipo = {"completa": 2, "resumo": 1}
+    melhor_por_chave = {}
+    outros = []
+    for r in rows:
+        if r.get("tipo") not in ordem_tipo or not r.get("chave"):
+            outros.append(r)
+            continue
+        chave = r["chave"]
+        atual = melhor_por_chave.get(chave)
+        if atual is None or ordem_tipo[r["tipo"]] > ordem_tipo[atual["tipo"]]:
+            melhor_por_chave[chave] = r
+
+    combinados = list(melhor_por_chave.values()) + outros
+    combinados.sort(key=lambda r: r["nsu"], reverse=True)
+    return combinados[offset:offset + limit], len(combinados)
+
+
+def xmls_cte_documentos(cliente_id: str, papel: str = None):
+    filtros = ["cliente_id = %s", "tipo = 'completa'", "xml_conteudo <> ''"]
+    params = [cliente_id]
+    if papel:
+        filtros.append("papel = %s")
+        params.append(papel)
+    where = " AND ".join(filtros)
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT chave, xml_conteudo FROM cte_documentos WHERE {where} ORDER BY nsu",
                 params,
             )
             return cur.fetchall()

@@ -167,6 +167,21 @@ def _init_sqlite():
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (cliente_id, nsu)
             );
+            CREATE TABLE IF NOT EXISTS cte_nsu_cursor (
+                cliente_id TEXT PRIMARY KEY, ultimo_nsu INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'parado', docs_processados INTEGER DEFAULT 0,
+                erro TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS cte_documentos (
+                cliente_id TEXT, nsu INTEGER, chave TEXT DEFAULT '',
+                tipo TEXT DEFAULT '', papel TEXT DEFAULT '',
+                emitente_cnpj TEXT DEFAULT '', emitente_nome TEXT DEFAULT '',
+                data_emissao TEXT DEFAULT '', valor REAL DEFAULT 0,
+                situacao TEXT DEFAULT '',
+                xml_conteudo TEXT DEFAULT '',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cliente_id, nsu)
+            );
         """)
         conn.commit()
 
