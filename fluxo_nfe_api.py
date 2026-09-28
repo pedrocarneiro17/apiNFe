@@ -693,6 +693,27 @@ def assinar_evento(env_element: etree._Element, chave_privada, certificado) -> e
 
 _SOAP_NS = "http://www.w3.org/2003/05/soap-envelope"
 
+
+def _post_com_retry(url: str, data: bytes, cert, headers: dict,
+                    timeout: int = 30, tentativas: int = 3):
+    """POST com retry só pra falha de CONEXÃO (timeout/DNS/reset) — nunca
+    reenvia depois de uma resposta HTTP de verdade (mesmo erro/rejeição da
+    SEFAZ), já que aí a tentativa já chegou lá e reenviar seria redundante
+    ou, em serviços de envio de lote, arriscado. Instabilidade de rede
+    pontual da SEFAZ é comum e não deveria derrubar a sincronização toda."""
+    import time
+    ultimo_erro = None
+    for tentativa in range(1, tentativas + 1):
+        try:
+            return requests.post(url, data=data, cert=cert, headers=headers, timeout=timeout)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            ultimo_erro = e
+            print(f"[nfe] falha de conexão (tentativa {tentativa}/{tentativas}): {e}", flush=True)
+            if tentativa < tentativas:
+                time.sleep(3 * tentativa)
+    raise ultimo_erro
+
+
 def _montar_soap(servico: str, cuf: int, xml_inner: str) -> bytes:
     """
     Monta envelope SOAP 1.2.
@@ -780,7 +801,7 @@ def _enviar_soap_distribuicao(url: str, xml_inner: str,
     soap_bytes = _montar_soap_distribuicao(xml_inner)
     soap_action = f'"{WSDL_BASE}/NFeDistribuicaoDFe/nfeDistDFeInteresse"'
     print(f"[nfe] POST {url}", flush=True)
-    resp = requests.post(
+    resp = _post_com_retry(
         url,
         data=soap_bytes,
         cert=(cert_path, key_path),
@@ -788,7 +809,6 @@ def _enviar_soap_distribuicao(url: str, xml_inner: str,
             "Content-Type": "application/soap+xml; charset=utf-8",
             "SOAPAction": soap_action,
         },
-        timeout=30,
     )
     print(f"[nfe] HTTP {resp.status_code}", flush=True)
     resp.raise_for_status()
@@ -1773,7 +1793,7 @@ def _enviar_soap_distribuicao_cte(url: str, xml_inner: str,
     soap_bytes = _montar_soap_distribuicao_cte(xml_inner)
     soap_action = f'"{WSDL_BASE_CTE}/CTeDistribuicaoDFe/cteDistDFeInteresse"'
     print(f"[cte] POST {url}", flush=True)
-    resp = requests.post(
+    resp = _post_com_retry(
         url,
         data=soap_bytes,
         cert=(cert_path, key_path),
@@ -1781,7 +1801,6 @@ def _enviar_soap_distribuicao_cte(url: str, xml_inner: str,
             "Content-Type": "application/soap+xml; charset=utf-8",
             "SOAPAction": soap_action,
         },
-        timeout=30,
     )
     print(f"[cte] HTTP {resp.status_code}", flush=True)
     resp.raise_for_status()
