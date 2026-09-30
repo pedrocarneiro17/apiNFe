@@ -845,16 +845,31 @@ def criar_nota(dados: dict) -> int:
             return cur.fetchone()[0]
 
 
-def listar_notas(cliente_id: str = None, status: str = None):
+def _filtros_periodo_notas(cliente_id=None, status=None, data_ini=None, data_fim=None,
+                           alias="n"):
+    filters, params = [], []
+    if cliente_id:
+        filters.append(f"{alias}.cliente_id = %s")
+        params.append(cliente_id)
+    if status:
+        filters.append(f"{alias}.status = %s")
+        params.append(status)
+    if data_ini:
+        # date(...) funciona em Postgres e SQLite — evita depender de
+        # INTERVAL/cast ::date (só Postgres) pro shim de dev funcionar igual.
+        filters.append(f"date({alias}.criado_em) >= %s")
+        params.append(data_ini)
+    if data_fim:
+        filters.append(f"date({alias}.criado_em) <= %s")
+        params.append(data_fim)
+    return filters, params
+
+
+def listar_notas(cliente_id: str = None, status: str = None,
+                 data_ini: str = None, data_fim: str = None):
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
-            filters, params = [], []
-            if cliente_id:
-                filters.append("n.cliente_id = %s")
-                params.append(cliente_id)
-            if status:
-                filters.append("n.status = %s")
-                params.append(status)
+            filters, params = _filtros_periodo_notas(cliente_id, status, data_ini, data_fim)
             where = ("WHERE " + " AND ".join(filters)) if filters else ""
             cur.execute(f"""
                 SELECT n.*, c.razao_social
@@ -869,6 +884,42 @@ def listar_notas(cliente_id: str = None, status: str = None):
                     r["itens"] = json.loads(r["itens"])
                 _normalizar_case_misto(r)
             return rows
+
+
+def totalizar_notas(cliente_id: str = None, status: str = None,
+                    data_ini: str = None, data_fim: str = None) -> dict:
+    """Quantidade e soma de valor das notas no período/filtro — pra exibir
+    um totalizador na tela sem ter que somar na mão."""
+    with _get_conn() as conn:
+        with _dict_cursor(conn) as cur:
+            filters, params = _filtros_periodo_notas(cliente_id, status, data_ini, data_fim)
+            where = ("WHERE " + " AND ".join(filters)) if filters else ""
+            cur.execute(f"""
+                SELECT COUNT(*) AS quantidade, COALESCE(SUM(n.v_nf), 0) AS total_valor
+                FROM notas n
+                {where}
+            """, params)
+            row = _row(cur) or {"quantidade": 0, "total_valor": 0}
+            return {"quantidade": int(row["quantidade"] or 0),
+                    "total_valor": float(row["total_valor"] or 0)}
+
+
+def xmls_notas(cliente_id: str = None, status: str = "emitido",
+              data_ini: str = None, data_fim: str = None):
+    """[(chave, xml_conteudo, n_nfe, modelo)] das notas emitidas no
+    período/filtro — pra download em lote (ZIP)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            filters, params = _filtros_periodo_notas(cliente_id, status, data_ini, data_fim)
+            filters.append("n.xml_conteudo IS NOT NULL AND n.xml_conteudo <> ''")
+            where = "WHERE " + " AND ".join(filters)
+            cur.execute(f"""
+                SELECT n.chave, n.xml_conteudo, n.n_nfe, n.modelo
+                FROM notas n
+                {where}
+                ORDER BY n.n_nfe
+            """, params)
+            return cur.fetchall()
 
 
 def get_nota(nota_id: int):

@@ -94,14 +94,56 @@ def logout():
 def admin_notas():
     cliente_id = request.args.get("cliente_id", "")
     status     = request.args.get("status", "")
+    data_ini   = request.args.get("data_ini", "")
+    data_fim   = request.args.get("data_fim", "")
     notas      = db.listar_notas(
         cliente_id=cliente_id or None,
         status=status or None,
+        data_ini=data_ini or None,
+        data_fim=data_fim or None,
+    )
+    totais = db.totalizar_notas(
+        cliente_id=cliente_id or None,
+        status=status or None,
+        data_ini=data_ini or None,
+        data_fim=data_fim or None,
     )
     clientes = db.listar_clientes()
     return render_template("admin/notas.html",
                            notas=notas, clientes=clientes,
-                           filtro_cliente=cliente_id, filtro_status=status)
+                           filtro_cliente=cliente_id, filtro_status=status,
+                           filtro_data_ini=data_ini, filtro_data_fim=data_fim,
+                           totais=totais)
+
+
+@app.route("/admin/notas/baixar-lote")
+@_requer_login
+def admin_notas_baixar_lote():
+    """ZIP com os XMLs das notas emitidas no período/filtro selecionado."""
+    import io, zipfile
+    cliente_id = request.args.get("cliente_id", "")
+    data_ini   = request.args.get("data_ini", "")
+    data_fim   = request.args.get("data_fim", "")
+    linhas = db.xmls_notas(
+        cliente_id=cliente_id or None,
+        data_ini=data_ini or None,
+        data_fim=data_fim or None,
+    )
+    if not linhas:
+        return "Nenhuma nota emitida encontrada pra esse período/filtro.", 404
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for chave, xml_conteudo, n_nfe, modelo in linhas:
+            prefixo = "NFCe" if modelo == 65 else "NFe"
+            nome = f"{prefixo}{n_nfe}-{chave}.xml" if chave else f"{prefixo}{n_nfe}.xml"
+            zf.writestr(nome, xml_conteudo or "")
+    buf.seek(0)
+    sufixo = ""
+    if data_ini or data_fim:
+        sufixo = f"_{data_ini or 'inicio'}_a_{data_fim or 'hoje'}"
+    nome_arquivo = f"notas{('_' + cliente_id) if cliente_id else ''}{sufixo}.zip"
+    return Response(buf.getvalue(), mimetype="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
 
 
 @app.route("/admin/notas/nova", methods=["GET", "POST"])

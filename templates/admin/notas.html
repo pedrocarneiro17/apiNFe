@@ -30,6 +30,14 @@
         <option value="erro"      {% if filtro_status=='erro'      %}selected{% endif %}>Erro</option>
       </select>
     </div>
+    <div class="form-group" style="margin:0;min-width:150px">
+      <label>De</label>
+      <input type="date" name="data_ini" value="{{ filtro_data_ini }}">
+    </div>
+    <div class="form-group" style="margin:0;min-width:150px">
+      <label>Até</label>
+      <input type="date" name="data_fim" value="{{ filtro_data_fim }}">
+    </div>
     <button type="submit" class="btn btn-outline btn-sm">Filtrar</button>
     <a href="/admin/notas" class="btn btn-outline btn-sm">Limpar</a>
     <div style="display:flex;gap:.5rem;margin-left:auto">
@@ -41,6 +49,21 @@
       </a>
     </div>
   </form>
+</div>
+
+<div class="card" style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+  <div>
+    <div style="font-size:.72rem;color:var(--muted-fg)">Total no filtro atual</div>
+    <div style="font-size:1.1rem;font-weight:700">{{ totais.quantidade }} nota(s)</div>
+  </div>
+  <div>
+    <div style="font-size:.72rem;color:var(--muted-fg)">Valor somado</div>
+    <div style="font-size:1.1rem;font-weight:700">R$ {{ '%.2f'|format(totais.total_valor) }}</div>
+  </div>
+  <a class="btn btn-outline btn-sm" style="margin-left:auto"
+     href="/admin/notas/baixar-lote?cliente_id={{ filtro_cliente }}&data_ini={{ filtro_data_ini }}&data_fim={{ filtro_data_fim }}">
+    <i class="ti ti-download"></i> Baixar XML em lote (ZIP)
+  </a>
 </div>
 
 <div class="card">
