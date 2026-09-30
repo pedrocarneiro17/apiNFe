@@ -102,9 +102,14 @@ def admin_notas():
         data_ini=data_ini or None,
         data_fim=data_fim or None,
     )
+    # Sem filtro de status escolhido, o totalizador soma só 'emitido'
+    # (faturamento de verdade) — pendente/erro/cancelado inflariam o valor
+    # com notas que nunca foram (ou deixaram de ser) autorizadas na SEFAZ.
+    # Se o usuário escolhe um status específico (ex: "Erro"), respeita a
+    # escolha dele pra poder auditar aquele grupo.
     totais = db.totalizar_notas(
         cliente_id=cliente_id or None,
-        status=status or None,
+        status=status or "emitido",
         data_ini=data_ini or None,
         data_fim=data_fim or None,
     )

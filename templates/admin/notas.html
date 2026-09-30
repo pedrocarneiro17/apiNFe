@@ -53,7 +53,9 @@
 
 <div class="card" style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
   <div>
-    <div style="font-size:.72rem;color:var(--muted-fg)">Total no filtro atual</div>
+    <div style="font-size:.72rem;color:var(--muted-fg)">
+      {% if filtro_status %}Total ({{ filtro_status }}){% else %}Total emitido no período{% endif %}
+    </div>
     <div style="font-size:1.1rem;font-weight:700">{{ totais.quantidade }} nota(s)</div>
   </div>
   <div>
