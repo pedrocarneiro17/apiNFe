@@ -5,6 +5,7 @@ Tabelas: clientes (emitentes), produtos, notas.
 import os
 import json
 import contextlib
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -219,7 +220,15 @@ def init_db():
                     ultimo_nsu BIGINT DEFAULT 0,
                     status TEXT DEFAULT 'parado',
                     docs_processados INTEGER DEFAULT 0,
-                    erro TEXT DEFAULT ''
+                    erro TEXT DEFAULT '',
+                    atualizado_em TIMESTAMP DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS agendamentos_executados (
+                    data TEXT,
+                    hora_alvo TEXT,
+                    executado_em TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (data, hora_alvo)
                 );
 
                 CREATE TABLE IF NOT EXISTS cte_documentos (
@@ -252,6 +261,7 @@ def init_db():
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'parado'",
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS docs_processados INTEGER DEFAULT 0",
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS erro TEXT DEFAULT ''",
+        "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP DEFAULT NOW()",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:
@@ -446,16 +456,18 @@ def apagar_dfe_documentos(cliente_id: str):
 
 def definir_status_sync_dfe(cliente_id: str, status: str, docs_processados: int = 0, erro: str = ""):
     """Progresso da sincronização em background da Distribuição DFe."""
+    agora = datetime.now()
     with _get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO dfe_nsu_cursor (cliente_id, status, docs_processados, erro)
-                   VALUES (%s, %s, %s, %s)
+                """INSERT INTO dfe_nsu_cursor (cliente_id, status, docs_processados, erro, atualizado_em)
+                   VALUES (%s, %s, %s, %s, %s)
                    ON CONFLICT (cliente_id) DO UPDATE SET
                        status = EXCLUDED.status,
                        docs_processados = EXCLUDED.docs_processados,
-                       erro = EXCLUDED.erro""",
-                (cliente_id, status, docs_processados, erro),
+                       erro = EXCLUDED.erro,
+                       atualizado_em = EXCLUDED.atualizado_em""",
+                (cliente_id, status, docs_processados, erro, agora),
             )
 
 
@@ -463,11 +475,12 @@ def get_status_sync_dfe(cliente_id: str) -> dict:
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute(
-                "SELECT status, docs_processados, erro, ultimo_nsu FROM dfe_nsu_cursor WHERE cliente_id = %s",
+                "SELECT status, docs_processados, erro, ultimo_nsu, atualizado_em FROM dfe_nsu_cursor WHERE cliente_id = %s",
                 (cliente_id,),
             )
             row = _row(cur)
-            return row or {"status": "parado", "docs_processados": 0, "erro": "", "ultimo_nsu": 0}
+            return row or {"status": "parado", "docs_processados": 0, "erro": "",
+                           "ultimo_nsu": 0, "atualizado_em": None}
 
 
 def salvar_dfe_documento(cliente_id: str, doc: dict):
@@ -630,16 +643,18 @@ def apagar_cte_documentos(cliente_id: str):
 
 
 def definir_status_sync_cte(cliente_id: str, status: str, docs_processados: int = 0, erro: str = ""):
+    agora = datetime.now()
     with _get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO cte_nsu_cursor (cliente_id, status, docs_processados, erro)
-                   VALUES (%s, %s, %s, %s)
+                """INSERT INTO cte_nsu_cursor (cliente_id, status, docs_processados, erro, atualizado_em)
+                   VALUES (%s, %s, %s, %s, %s)
                    ON CONFLICT (cliente_id) DO UPDATE SET
                        status = EXCLUDED.status,
                        docs_processados = EXCLUDED.docs_processados,
-                       erro = EXCLUDED.erro""",
-                (cliente_id, status, docs_processados, erro),
+                       erro = EXCLUDED.erro,
+                       atualizado_em = EXCLUDED.atualizado_em""",
+                (cliente_id, status, docs_processados, erro, agora),
             )
 
 
@@ -647,11 +662,12 @@ def get_status_sync_cte(cliente_id: str) -> dict:
     with _get_conn() as conn:
         with _dict_cursor(conn) as cur:
             cur.execute(
-                "SELECT status, docs_processados, erro, ultimo_nsu FROM cte_nsu_cursor WHERE cliente_id = %s",
+                "SELECT status, docs_processados, erro, ultimo_nsu, atualizado_em FROM cte_nsu_cursor WHERE cliente_id = %s",
                 (cliente_id,),
             )
             row = _row(cur)
-            return row or {"status": "parado", "docs_processados": 0, "erro": "", "ultimo_nsu": 0}
+            return row or {"status": "parado", "docs_processados": 0, "erro": "",
+                           "ultimo_nsu": 0, "atualizado_em": None}
 
 
 def salvar_cte_documento(cliente_id: str, doc: dict):
@@ -742,6 +758,25 @@ def xmls_cte_documentos(cliente_id: str, papel: str = None):
                 params,
             )
             return cur.fetchall()
+
+
+def reivindicar_agendamento(data: str, hora_alvo: str) -> bool:
+    """Tenta 'reivindicar' a execução de um agendamento (data + horário-alvo,
+    ex: '2026-10-01' + '08'). Usado pra evitar rodar a mesma rotina duas
+    vezes quando o servidor tem mais de um worker (cada processo tem sua
+    própria thread de agendamento) — só o primeiro a inserir com sucesso
+    (sem conflito) de fato executa a tarefa; os outros veem o conflito e
+    pulam essa rodada."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO agendamentos_executados (data, hora_alvo) VALUES (%s, %s)",
+                    (data, hora_alvo),
+                )
+                return True
+            except Exception:
+                return False
 
 
 # ── Produtos ──────────────────────────────────────────────────────

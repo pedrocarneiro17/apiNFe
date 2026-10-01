@@ -11,6 +11,10 @@ os.environ.setdefault("ADMIN_USER",   "admin")
 os.environ.setdefault("ADMIN_PASS",   "admin")
 os.environ.setdefault("SECRET_KEY",   "dev-secret-nfe-2025")
 os.environ.setdefault("API_KEY",      "dev-api-key")
+# Desliga o agendador de sincronização automática no dev local — evita
+# disparar sincronizações reais contra a SEFAZ sem querer se o relógio da
+# máquina bater com um dos horários-alvo durante um teste.
+os.environ.setdefault("AGENDADOR_SYNC_ATIVO", "0")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "dev.db")
 
@@ -170,7 +174,7 @@ def _init_sqlite():
             CREATE TABLE IF NOT EXISTS cte_nsu_cursor (
                 cliente_id TEXT PRIMARY KEY, ultimo_nsu INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'parado', docs_processados INTEGER DEFAULT 0,
-                erro TEXT DEFAULT ''
+                erro TEXT DEFAULT '', atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS cte_documentos (
                 cliente_id TEXT, nsu INTEGER, chave TEXT DEFAULT '',
@@ -181,6 +185,11 @@ def _init_sqlite():
                 xml_conteudo TEXT DEFAULT '',
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (cliente_id, nsu)
+            );
+            CREATE TABLE IF NOT EXISTS agendamentos_executados (
+                data TEXT, hora_alvo TEXT,
+                executado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (data, hora_alvo)
             );
         """)
         conn.commit()
@@ -201,6 +210,7 @@ def _init_sqlite():
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN status TEXT DEFAULT 'parado'",
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN docs_processados INTEGER DEFAULT 0",
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN erro TEXT DEFAULT ''",
+            "ALTER TABLE dfe_nsu_cursor ADD COLUMN atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         ]:
             try:
                 cur.execute(col_sql)

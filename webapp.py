@@ -7,7 +7,7 @@ import re
 import json
 import threading
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import (Flask, render_template, request, jsonify,
                    redirect, url_for, session, abort, send_file, Response)
@@ -1343,6 +1343,97 @@ def admin_distribuicao_cte_baixar_lote():
     nome_arquivo = f"ctes_{cliente_id}{('_' + papel) if papel else ''}.zip"
     return Response(buf.getvalue(), mimetype="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'})
+
+
+# ─── Agendador: sincroniza Distribuição DFe (NF-e e CT-e) de todos os
+# clientes automaticamente, 3x/dia (08h, 12h, 16h — horário de Brasília) ───
+
+def _pode_sincronizar_agora(status_info: dict) -> bool:
+    """Evita disparar duas sincronizações simultâneas pro mesmo cliente, e
+    evita reinsistir num cliente que a SEFAZ acabou de pausar por limite —
+    insistir cedo demais reinicia o prazo de espera de 1h (já vivido nesse
+    projeto), então o agendador espera pelo menos 65min antes de tentar de
+    novo esse cliente."""
+    status = status_info.get("status")
+    if status == "rodando":
+        return False
+    if status == "limite_sefaz":
+        atualizado_em = status_info.get("atualizado_em")
+        if isinstance(atualizado_em, str):
+            try:
+                atualizado_em = datetime.fromisoformat(atualizado_em)
+            except ValueError:
+                atualizado_em = None
+        if atualizado_em and (datetime.now() - atualizado_em) < timedelta(minutes=65):
+            return False
+    return True
+
+
+def _sincronizar_todos_clientes_agendado():
+    """Roda a Distribuição DFe (NF-e e CT-e) pra todo cliente com
+    certificado cadastrado — chamado pelo agendador automático."""
+    from fluxo_nfe_api import _pfx_para_pem
+    import time
+
+    clientes = db.listar_clientes()
+    print(f"[agendador] iniciando rodada — {len(clientes)} cliente(s)", flush=True)
+
+    for cliente in clientes:
+        cliente_id = cliente.get("id")
+        if not cliente_id or not cliente.get("caminho_certificado"):
+            continue
+        caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
+        senha = cliente.get("senha_certificado", "")
+
+        if _pode_sincronizar_agora(db.get_status_sync_dfe(cliente_id)):
+            try:
+                cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(caminho_pfx, senha)
+                db.definir_status_sync_dfe(cliente_id, "rodando", 0)
+                _sincronizar_dfe_tarefa(cliente_id, cliente["cnpj"], cliente["uf"],
+                                        cert_path, key_path, chave_privada, certificado, tmp_dir)
+            except Exception as e:
+                print(f"[agendador] {cliente_id} NF-e falhou: {e}", flush=True)
+                db.definir_status_sync_dfe(cliente_id, "erro", 0, str(e))
+
+        if _pode_sincronizar_agora(db.get_status_sync_cte(cliente_id)):
+            try:
+                cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(caminho_pfx, senha)
+                db.definir_status_sync_cte(cliente_id, "rodando", 0)
+                _sincronizar_cte_tarefa(cliente_id, cliente["cnpj"], cliente["uf"],
+                                        cert_path, key_path, tmp_dir)
+            except Exception as e:
+                print(f"[agendador] {cliente_id} CT-e falhou: {e}", flush=True)
+                db.definir_status_sync_cte(cliente_id, "erro", 0, str(e))
+
+        time.sleep(3)  # respiro entre clientes
+
+    print("[agendador] rodada concluída", flush=True)
+
+
+def _loop_agendador():
+    """Acorda a cada minuto e confere se é hora de rodar — 08h/12h/16h,
+    horário de Brasília, todo dia. Com gunicorn --workers 2, cada processo
+    roda sua própria cópia dessa thread; `db.reivindicar_agendamento` (uma
+    linha única por data+horário) garante que só um deles de fato executa
+    a rodada pra cada horário-alvo."""
+    import time
+    horarios_alvo = ("08", "12", "16")
+    while True:
+        try:
+            agora = datetime.now(timezone(timedelta(hours=-3)))
+            hora_atual = f"{agora.hour:02d}"
+            if hora_atual in horarios_alvo and agora.minute < 5:
+                data_str = agora.strftime("%Y-%m-%d")
+                if db.reivindicar_agendamento(data_str, hora_atual):
+                    print(f"[agendador] reivindicado {data_str} {hora_atual}h — iniciando rodada", flush=True)
+                    _sincronizar_todos_clientes_agendado()
+        except Exception as e:
+            print(f"[agendador] erro no loop: {e}", flush=True)
+        time.sleep(60)
+
+
+if os.environ.get("AGENDADOR_SYNC_ATIVO", "1") == "1":
+    threading.Thread(target=_loop_agendador, daemon=True).start()
 
 
 if __name__ == "__main__":
