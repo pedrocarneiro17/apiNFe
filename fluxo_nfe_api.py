@@ -430,7 +430,15 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
     tp_emis = int(dados.get("tp_emis", 1))
     mod     = 55  # NF-e de produto
 
-    chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis)
+    # AAMM da chave e dhEmi PRECISAM vir do mesmo instante/fuso — a SEFAZ
+    # reconstrói a chave a partir dos campos do XML (incluindo o mês/ano
+    # tirado de dhEmi) e rejeita (cStat 502, "Campo Id não corresponde à
+    # concatenação dos campos correspondentes") se divergir. Usar
+    # datetime.now() ingênuo (fuso do servidor, não necessariamente
+    # Brasília) pra gerar a chave e datetime.now(UTC-3) separado pro dhEmi
+    # podia dar essa divergência bem na virada de mês/dia.
+    agora_brt = datetime.now(timezone(timedelta(hours=-3)))
+    chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis, data=agora_brt)
 
     nfe = etree.Element(f"{{{NS}}}NFe", nsmap={None: NS})
     inf = etree.SubElement(nfe, f"{{{NS}}}infNFe",
@@ -444,8 +452,7 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
     _sub(ide, "mod",     mod)
     _sub(ide, "serie",   str(serie))
     _sub(ide, "nNF",     str(nnf))
-    _sub(ide, "dhEmi",   datetime.now(timezone(timedelta(hours=-3)))
-                                  .strftime("%Y-%m-%dT%H:%M:%S-03:00"))
+    _sub(ide, "dhEmi",   agora_brt.strftime("%Y-%m-%dT%H:%M:%S-03:00"))
     _sub(ide, "tpNF",    dados.get("tp_nf", "1"))
     _sub(ide, "idDest",  dados.get("id_dest", "1"))
     _sub(ide, "cMunFG",  _so_numeros(dados["cMun_emitente"]))
@@ -1432,8 +1439,12 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
     tp_emis = int(dados.get("tp_emis", 1))
     mod     = 65
 
-    chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis)
-    dh_emi = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%dT%H:%M:%S-03:00")
+    # Mesmo cuidado de `montar_nfe_xml`: AAMM da chave e dhEmi precisam vir
+    # do mesmo instante/fuso (Brasília), senão a SEFAZ rejeita com cStat 502
+    # "Campo Id não corresponde à concatenação dos campos correspondentes".
+    agora_brt = datetime.now(timezone(timedelta(hours=-3)))
+    chave = gerar_chave_acesso(cuf, cnpj, mod, serie, nnf, tp_emis, data=agora_brt)
+    dh_emi = agora_brt.strftime("%Y-%m-%dT%H:%M:%S-03:00")
 
     nfe = etree.Element(f"{{{NS}}}NFe", nsmap={None: NS})
     inf = etree.SubElement(nfe, f"{{{NS}}}infNFe",
