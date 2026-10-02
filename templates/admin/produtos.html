@@ -102,7 +102,22 @@
             <select name="regime_icms" id="f-regime" onchange="alternarRegime()">
               <option value="simples">Simples Nacional (CSOSN)</option>
               <option value="normal">Regime Normal (CST)</option>
+              <option value="isento">Imune / Isento / Não tributado</option>
             </select>
+          </div>
+        </div>
+        <div id="area-isento" style="display:none">
+          <div class="form-group">
+            <label>Situação</label>
+            <select id="f-isento" onchange="aplicarIsento()">
+              <option value="imune">Imune — CSOSN 300 / CST 41</option>
+              <option value="isento">Isento — CSOSN 400 / CST 40</option>
+              <option value="nao_tributado">Não tributado — CSOSN 400 / CST 41</option>
+            </select>
+            <div style="font-size:.72rem;color:var(--muted-fg);margin-top:.3rem">
+              Grava o código certo pros dois regimes — a nota usa CSOSN se o
+              emitente for Simples Nacional, ou CST se for Regime Normal.
+            </div>
           </div>
         </div>
         <div id="area-csosn">
@@ -152,10 +167,32 @@
 </div>
 
 <script>
+const ISENTO_CODIGOS = {
+  imune:         { csosn: '300', cst: '41' },
+  isento:        { csosn: '400', cst: '40' },
+  nao_tributado: { csosn: '400', cst: '41' },
+};
+
+function aplicarIsento() {
+  const c = ISENTO_CODIGOS[document.getElementById('f-isento').value];
+  document.querySelector('[name=csosn]').value    = c.csosn;
+  document.querySelector('[name=cst_icms]').value = c.cst;
+}
+
 function alternarRegime() {
   const r = document.getElementById('f-regime').value;
-  document.getElementById('area-csosn').style.display = r === 'simples' ? '' : 'none';
-  document.getElementById('area-cst').style.display   = r === 'normal'  ? '' : 'none';
+  document.getElementById('area-csosn').style.display  = r === 'simples' ? '' : 'none';
+  document.getElementById('area-cst').style.display    = r === 'normal'  ? '' : 'none';
+  document.getElementById('area-isento').style.display = r === 'isento'  ? '' : 'none';
+  if (r === 'isento') aplicarIsento();
+}
+
+// Detecta "isento" só quando o par CSOSN+CST bate exatamente com um dos
+// mapeamentos — evita reclassificar produto antigo que só tinha um dos dois.
+function detectarIsento(csosn, cst) {
+  return Object.keys(ISENTO_CODIGOS).find(
+    k => ISENTO_CODIGOS[k].csosn === String(csosn) && ISENTO_CODIGOS[k].cst === String(cst)
+  );
 }
 
 function novoProduto() {
@@ -176,11 +213,15 @@ function editarProduto(p) {
   document.querySelector('[name=preco]').value     = p.preco || 0;
   document.querySelector('[name=orig]').value      = p.orig || '0';
   // detectar regime
+  const isento = detectarIsento(p.csosn, p.cst_icms);
   const temCsosn = p.csosn && p.csosn !== '00';
-  document.getElementById('f-regime').value = temCsosn ? 'simples' : 'normal';
+  document.getElementById('f-regime').value = isento ? 'isento' : (temCsosn ? 'simples' : 'normal');
+  if (isento) document.getElementById('f-isento').value = isento;
   alternarRegime();
-  document.querySelector('[name=csosn]').value    = p.csosn || '102';
-  document.querySelector('[name=cst_icms]').value = p.cst_icms || '00';
+  if (!isento) {
+    document.querySelector('[name=csosn]').value    = p.csosn || '102';
+    document.querySelector('[name=cst_icms]').value = p.cst_icms || '00';
+  }
   document.querySelector('[name=p_icms]').value   = p.p_icms || 12;
 }
 

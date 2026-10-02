@@ -301,6 +301,25 @@ def _sub(pai, tag: str, texto=None):
     return el
 
 
+# O schema da NF-e agrupa vários códigos sob a MESMA tag: CSOSN 102/103/300/400
+# usam <ICMSSN102>, e CST 40/41/50 usam <ICMS40>. Montar a tag como
+# f"ICMSSN{csosn}" / f"ICMS{cst}" gerava elementos que não existem no schema
+# (ex: <ICMSSN400>, <ICMS41>) pra imune/isento/não tributado.
+_GRUPO_ICMSSN = {"103": "ICMSSN102", "300": "ICMSSN102", "400": "ICMSSN102",
+                 "203": "ICMSSN202"}
+_GRUPO_ICMS_CST = {"41": "ICMS40", "50": "ICMS40"}
+
+
+def _tag_icmssn(csosn: str) -> str:
+    csosn = str(csosn)[:3]
+    return _GRUPO_ICMSSN.get(csosn, f"ICMSSN{csosn}")
+
+
+def _tag_icms_cst(cst: str) -> str:
+    cst = str(cst)
+    return _GRUPO_ICMS_CST.get(cst, f"ICMS{cst}")
+
+
 # ─── IBS/CBS — Reforma Tributária (LC 214/2025) ──────────────────
 #
 # 2026 é o "ano-teste": o schema já aceita os grupos IBS/CBS por item
@@ -548,13 +567,13 @@ def montar_nfe_xml(dados: dict) -> tuple[etree._Element, str]:
         if crt == 1:  # Simples Nacional
             csosn = str(item.get("CSOSN", "102"))
             orig  = str(item.get("orig", "0"))
-            grupo_icms = _sub(icms, f"ICMSSN{csosn[:3]}")
+            grupo_icms = _sub(icms, _tag_icmssn(csosn))
             _sub(grupo_icms, "orig", orig)
             _sub(grupo_icms, "CSOSN", csosn)
         else:  # Regime Normal (CRT=3)
             cst_icms = str(item.get("CST_ICMS", "00"))
             orig     = str(item.get("orig", "0"))
-            grupo_icms = _sub(icms, f"ICMS{cst_icms}")
+            grupo_icms = _sub(icms, _tag_icms_cst(cst_icms))
             _sub(grupo_icms, "orig", orig)
             _sub(grupo_icms, "CST", cst_icms)
             if cst_icms == "00":
@@ -1542,12 +1561,12 @@ def montar_nfce_xml(dados: dict) -> tuple[etree._Element, str]:
         csosn   = str(item.get("CSOSN", item.get("csosn", "102")))
         orig    = str(item.get("orig", "0"))
         if crt == 1:
-            grupo = _sub(icms, f"ICMSSN{csosn[:3]}")
+            grupo = _sub(icms, _tag_icmssn(csosn))
             _sub(grupo, "orig",  orig)
             _sub(grupo, "CSOSN", csosn)
         else:
             cst = str(item.get("CST_ICMS", "00"))
-            grupo = _sub(icms, f"ICMS{cst}")
+            grupo = _sub(icms, _tag_icms_cst(cst))
             _sub(grupo, "orig", orig)
             _sub(grupo, "CST",  cst)
             if cst == "00":
