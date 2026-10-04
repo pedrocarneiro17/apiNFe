@@ -262,6 +262,7 @@ def init_db():
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS docs_processados INTEGER DEFAULT 0",
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS erro TEXT DEFAULT ''",
         "ALTER TABLE dfe_nsu_cursor ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP DEFAULT NOW()",
+        "ALTER TABLE cte_nsu_cursor ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP DEFAULT NOW()",
     ]
     with _get_conn() as conn:
         with conn.cursor() as cur:

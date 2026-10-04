@@ -1385,25 +1385,34 @@ def _sincronizar_todos_clientes_agendado():
         caminho_pfx = _resolver_cert(cliente["caminho_certificado"])
         senha = cliente.get("senha_certificado", "")
 
-        if _pode_sincronizar_agora(db.get_status_sync_dfe(cliente_id)):
-            try:
+        # Cada serviço/cliente dentro do seu próprio try: uma falha (ex: erro
+        # de banco ou de certificado de UM cliente) não pode abortar a rodada
+        # inteira e deixar os demais clientes sem sincronizar.
+        try:
+            if _pode_sincronizar_agora(db.get_status_sync_dfe(cliente_id)):
                 cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(caminho_pfx, senha)
                 db.definir_status_sync_dfe(cliente_id, "rodando", 0)
                 _sincronizar_dfe_tarefa(cliente_id, cliente["cnpj"], cliente["uf"],
                                         cert_path, key_path, chave_privada, certificado, tmp_dir)
-            except Exception as e:
-                print(f"[agendador] {cliente_id} NF-e falhou: {e}", flush=True)
-                db.definir_status_sync_dfe(cliente_id, "erro", 0, str(e))
-
-        if _pode_sincronizar_agora(db.get_status_sync_cte(cliente_id)):
+        except Exception as e:
+            print(f"[agendador] {cliente_id} NF-e falhou: {e}", flush=True)
             try:
+                db.definir_status_sync_dfe(cliente_id, "erro", 0, str(e))
+            except Exception:
+                pass
+
+        try:
+            if _pode_sincronizar_agora(db.get_status_sync_cte(cliente_id)):
                 cert_path, key_path, tmp_dir, chave_privada, certificado = _pfx_para_pem(caminho_pfx, senha)
                 db.definir_status_sync_cte(cliente_id, "rodando", 0)
                 _sincronizar_cte_tarefa(cliente_id, cliente["cnpj"], cliente["uf"],
                                         cert_path, key_path, tmp_dir)
-            except Exception as e:
-                print(f"[agendador] {cliente_id} CT-e falhou: {e}", flush=True)
+        except Exception as e:
+            print(f"[agendador] {cliente_id} CT-e falhou: {e}", flush=True)
+            try:
                 db.definir_status_sync_cte(cliente_id, "erro", 0, str(e))
+            except Exception:
+                pass
 
         time.sleep(3)  # respiro entre clientes
 

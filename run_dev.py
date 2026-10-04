@@ -211,6 +211,7 @@ def _init_sqlite():
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN docs_processados INTEGER DEFAULT 0",
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN erro TEXT DEFAULT ''",
             "ALTER TABLE dfe_nsu_cursor ADD COLUMN atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE cte_nsu_cursor ADD COLUMN atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
         ]:
             try:
                 cur.execute(col_sql)
