@@ -1761,6 +1761,9 @@ def emitir_nfce(dados: dict) -> dict:
 
 # ─── Distribuição DFe de CT-e (CTeDistribuicaoDFe) ────────────────────────
 #
+# ATENÇÃO: distDFeInt do CT-e é versao="1.00" (o NF-e é "1.01") — usar 1.01 aqui
+# dá cStat 239 "A versao do arquivo xml nao e suportada".
+#
 # Mesmo modelo do NFeDistribuicaoDFe (NSU exclusivo por CNPJ, distNSU/consNSU,
 # retenção de 90 dias), mas serviço, namespace e nomes de schema próprios do
 # CT-e. Confirmado contra a implementação de referência (nfephp-org/sped-cte,
@@ -1866,7 +1869,7 @@ def distribuir_cte(cnpj: str, uf: str, ult_nsu: int, cert_path: str, key_path: s
     """Consulta CTeDistribuicaoDFe a partir do NSU informado (0 = do início)
     — mesma lógica de paginação do `distribuir_dfe` (NF-e)."""
     cuf_autor = _UF_IBGE[uf.upper()]
-    xml = (f'<distDFeInt versao="1.01" xmlns="{NS_CTE}">'
+    xml = (f'<distDFeInt versao="1.00" xmlns="{NS_CTE}">'
            f'<tpAmb>{_tp_amb()}</tpAmb>'
            f'<cUFAutor>{cuf_autor}</cUFAutor>'
            f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
@@ -1894,7 +1897,7 @@ def consultar_cte_por_nsu(nsu: int, cnpj: str, uf: str, cert_path: str, key_path
     """Consulta um NSU específico (modo consNSU) — mesma utilidade do
     equivalente em NF-e: investigar gaps ou reprocessar um item já salvo."""
     cuf_autor = _UF_IBGE[uf.upper()]
-    xml = (f'<distDFeInt versao="1.01" xmlns="{NS_CTE}">'
+    xml = (f'<distDFeInt versao="1.00" xmlns="{NS_CTE}">'
            f'<tpAmb>{_tp_amb()}</tpAmb>'
            f'<cUFAutor>{cuf_autor}</cUFAutor>'
            f'<CNPJ>{_so_numeros(cnpj)}</CNPJ>'
