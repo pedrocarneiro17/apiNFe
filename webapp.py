@@ -44,6 +44,13 @@ def _so_numeros(s: str) -> str:
     return re.sub(r"\D", "", s or "")
 
 
+def _int_ou(valor, padrao: int) -> int:
+    try:
+        return int(str(valor).strip())
+    except (TypeError, ValueError):
+        return padrao
+
+
 def _certs_path() -> str:
     p = os.environ.get("CERTS_PATH") or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "certs"
@@ -380,14 +387,19 @@ def admin_salvar_cliente():
     if not nome:
         return jsonify({"erro": "ID obrigatório"}), 400
     existente = db.carregar_cliente(nome) or {}
+    uf = request.form.get("uf", "").upper()
+    # cuf vem de um campo readonly preenchido por JS — se chegar vazio, deriva
+    # da UF em vez de estourar 500 (que a tela não mostrava).
+    from fluxo_nfe_api import _UF_IBGE
+    cuf = _int_ou(request.form.get("cuf"), _UF_IBGE.get(uf, 0))
     dados = {
         "razao_social": request.form.get("razao_social", ""),
         "xFant":        request.form.get("xFant", ""),
         "cnpj":         _so_numeros(request.form.get("cnpj", "")),
         "ie":           _so_numeros(request.form.get("ie", "")),
-        "crt":          int(request.form.get("crt", 1)),
-        "uf":           request.form.get("uf", "").upper(),
-        "cuf":          int(request.form.get("cuf", 0)),
+        "crt":          _int_ou(request.form.get("crt"), 1),
+        "uf":           uf,
+        "cuf":          cuf,
         "cep":          _so_numeros(request.form.get("cep", "")),
         "xLgr":         request.form.get("xLgr", ""),
         "nro":          request.form.get("nro", ""),
@@ -396,7 +408,7 @@ def admin_salvar_cliente():
         "cMun":         request.form.get("cMun", ""),
         "xMun":         request.form.get("xMun", ""),
         "fone":         _so_numeros(request.form.get("fone", "")),
-        "serie":        int(request.form.get("serie", 1)),
+        "serie":        _int_ou(request.form.get("serie"), 1),
         "caminho_certificado": existente.get("caminho_certificado", ""),
         "senha_certificado":   request.form.get("senha_certificado", "") or existente.get("senha_certificado", ""),
         "id_csc":       request.form.get("id_csc", "") or existente.get("id_csc", "000001"),
@@ -414,14 +426,38 @@ def admin_upload_cert(cliente_id):
         return jsonify({"erro": "Envie um arquivo .pfx"}), 400
     nome_arquivo = f"{cliente_id}.pfx"
     dados_pfx = arq.read()
-    caminho = os.path.join(_certs_path(), nome_arquivo)
-    with open(caminho, "wb") as f:
-        f.write(dados_pfx)
-    db.salvar_certificado_bytes(cliente_id, dados_pfx)
-    cliente = db.carregar_cliente(cliente_id) or {}
-    cliente["caminho_certificado"] = nome_arquivo
-    db.salvar_cliente(cliente_id, cliente)
-    return jsonify({"ok": True, "arquivo": nome_arquivo})
+    if not dados_pfx:
+        return jsonify({"erro": "O arquivo .pfx está vazio."}), 400
+    cliente = db.carregar_cliente(cliente_id)
+    if not cliente:
+        return jsonify({"erro": f"Emitente '{cliente_id}' não encontrado — salve o cadastro antes de enviar o certificado."}), 404
+    try:
+        db.salvar_certificado_bytes(cliente_id, dados_pfx)
+        # Disco é só cache (o Postgres é a fonte da verdade, e _resolver_cert
+        # re-materializa) — falha aqui não pode impedir o cadastro.
+        try:
+            with open(os.path.join(_certs_path(), nome_arquivo), "wb") as f:
+                f.write(dados_pfx)
+        except OSError as e:
+            print(f"[cert] aviso: não gravou {nome_arquivo} em disco: {e}", flush=True)
+        cliente["caminho_certificado"] = nome_arquivo
+        db.salvar_cliente(cliente_id, cliente)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"erro": f"Falha ao salvar o certificado: {e}"}), 500
+
+    # Confere se o .pfx abre com a senha cadastrada — mesmo carregamento que a
+    # emissão usa; se não abrir aqui, não vai abrir na hora de emitir.
+    aviso = ""
+    try:
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        senha = (cliente.get("senha_certificado") or "").encode()
+        pkcs12.load_key_and_certificates(dados_pfx, senha or None)
+    except Exception as e:
+        aviso = (f"Certificado salvo, mas NÃO abriu com a senha cadastrada ({e}). "
+                 "Confira a senha do certificado e salve o emitente de novo.")
+    return jsonify({"ok": True, "arquivo": nome_arquivo, "aviso": aviso})
 
 
 @app.route("/admin/clientes/<cliente_id>/excluir", methods=["POST"])

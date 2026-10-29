@@ -257,28 +257,49 @@ function limparForm() {
   document.getElementById('form-titulo').textContent = 'Novo Emitente';
 }
 
+// Lê a resposta como texto: se o servidor devolver uma página de erro (500)
+// em vez de JSON, mostra o status em vez de falhar calado.
+async function postarJson(url, body) {
+  let resp;
+  try {
+    resp = await fetch(url, { method:'POST', body });
+  } catch (e) {
+    return { ok: false, erro: 'Falha de conexão com o servidor.' };
+  }
+  const texto = await resp.text();
+  try {
+    return JSON.parse(texto);
+  } catch (e) {
+    return { ok: false, erro: 'Erro ' + resp.status + ' do servidor (resposta inesperada).' };
+  }
+}
+
 document.getElementById('form-emitente').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const idEdit = document.getElementById('f-id-edit').value.trim();
   fd.set('id', idEdit);
 
-  const resp = await fetch('/admin/clientes/salvar', { method:'POST', body: fd });
-  const data = await resp.json();
+  const data = await postarJson('/admin/clientes/salvar', fd);
   if (!data.ok) { alert('Erro: ' + (data.erro || 'Erro ao salvar')); return; }
 
   // Upload do certificado se selecionado
   const clienteId = idEdit;
   const certFile = document.getElementById('f-cert-file').files[0];
+  let avisoCert = '';
   if (certFile) {
     const cfd = new FormData();
     cfd.append('cert', certFile);
-    const cr = await fetch('/admin/clientes/' + clienteId + '/cert', { method:'POST', body: cfd });
-    const cd = await cr.json();
-    if (!cd.ok) { alert('Aviso: certificado não salvo — ' + cd.erro); }
+    const cd = await postarJson('/admin/clientes/' + encodeURIComponent(clienteId) + '/cert', cfd);
+    if (!cd.ok) {
+      alert('Emitente salvo, mas o certificado NÃO foi salvo — ' + (cd.erro || 'erro desconhecido'));
+      location.reload();
+      return;
+    }
+    avisoCert = cd.aviso || '';
   }
 
-  alert('Emitente salvo com sucesso!');
+  alert(avisoCert ? ('Emitente salvo.\n\n⚠ ' + avisoCert) : 'Emitente salvo com sucesso!');
   location.reload();
 });
 
