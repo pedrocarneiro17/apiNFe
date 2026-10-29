@@ -150,7 +150,7 @@
         </div>
 
         <div class="section-label">Certificado Digital A1</div>
-        <div class="form-group" id="cert-upload-area" style="display:none">
+        <div class="form-group" id="cert-upload-area">
           <label>Arquivo .pfx</label>
           <input type="file" id="f-cert-file" accept=".pfx">
         </div>
@@ -218,7 +218,6 @@ function novoEmitente() {
   limparForm();
   document.getElementById('form-titulo').textContent = 'Novo Emitente';
   document.getElementById('f-id-edit').readOnly = false;
-  document.getElementById('cert-upload-area').style.display = '';
 }
 
 function editarEmitente(c) {
@@ -243,7 +242,6 @@ function editarEmitente(c) {
   document.getElementById('f-xmun').value     = c.xmun || '';
   document.querySelector('[name=fone]').value  = c.fone || '';
   document.getElementById('f-idcsc').value    = c.id_csc || '';
-  document.getElementById('cert-upload-area').style.display = '';
   document.getElementById('f-cert-senha').value = '';
   document.getElementById('f-csc').value = '';
   document.getElementById('form-card').scrollIntoView({behavior:'smooth'});
@@ -253,7 +251,6 @@ function limparForm() {
   document.getElementById('form-emitente').reset();
   document.getElementById('f-id').value = '';
   document.getElementById('f-id-edit').readOnly = false;
-  document.getElementById('cert-upload-area').style.display = 'none';
   document.getElementById('form-titulo').textContent = 'Novo Emitente';
 }
 
